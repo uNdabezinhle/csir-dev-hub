@@ -1,9 +1,9 @@
 """Authentication: local accounts (bcrypt) and OIDC (Keycloak; LDAP-federated users, TOTP enforced by the realm flow)."""
 import time, secrets, bcrypt, httpx, jwt, json
-from urllib.parse import urlencode
+from urllib.parse import urlencode, urlparse
 from fastapi import Request
 from . import db
-from .config import OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, PORTAL_PUBLIC_URL, BOOTSTRAP_ADMIN_PASSWORD
+from .config import OIDC_ISSUER, OIDC_CLIENT_ID, OIDC_CLIENT_SECRET, PORTAL_PUBLIC_URL, PORTAL_LOCAL_URL, BOOTSTRAP_ADMIN_PASSWORD
 
 def hash_pw(pw): return bcrypt.hashpw(pw.encode(), bcrypt.gensalt()).decode()
 def check_pw(pw, h): return bool(h) and bcrypt.checkpw(pw.encode(), h.encode())
@@ -37,20 +37,26 @@ def discovery():
     return _disco
 
 def oidc_enabled(): return bool(OIDC_ISSUER and OIDC_CLIENT_SECRET)
-def redirect_uri(): return f"{PORTAL_PUBLIC_URL}/auth/oidc/callback"
+def portal_base(request: Request = None):
+    """Browser-facing base URL: the LAN URL if the request arrived on it, else the public URL."""
+    if request is not None and PORTAL_LOCAL_URL and urlparse(PORTAL_LOCAL_URL).netloc == request.headers.get("host", ""):
+        return PORTAL_LOCAL_URL
+    return PORTAL_PUBLIC_URL
+
+def redirect_uri(request: Request = None): return f"{portal_base(request)}/auth/oidc/callback"
 
 def oidc_start(request: Request):
     state, nonce = secrets.token_urlsafe(16), secrets.token_urlsafe(16)
-    request.session["oidc"] = {"state": state, "nonce": nonce}
+    request.session["oidc"] = {"state": state, "nonce": nonce, "redirect_uri": redirect_uri(request)}
     return discovery()["authorization_endpoint"] + "?" + urlencode({
         "client_id": OIDC_CLIENT_ID, "response_type": "code", "scope": "openid profile email",
-        "redirect_uri": redirect_uri(), "state": state, "nonce": nonce})
+        "redirect_uri": request.session["oidc"]["redirect_uri"], "state": state, "nonce": nonce})
 
 def oidc_finish(request: Request, code, state):
     st = request.session.pop("oidc", None)
     if not st or st["state"] != state: raise ValueError("invalid OIDC state")
     d = discovery()
-    tok = httpx.post(d["token_endpoint"], data={"grant_type": "authorization_code", "code": code, "redirect_uri": redirect_uri(),
+    tok = httpx.post(d["token_endpoint"], data={"grant_type": "authorization_code", "code": code, "redirect_uri": st.get("redirect_uri") or redirect_uri(),
                      "client_id": OIDC_CLIENT_ID, "client_secret": OIDC_CLIENT_SECRET}, timeout=15).json()
     if "id_token" not in tok: raise ValueError(f"token exchange failed: {tok.get('error_description', tok)}")
     key = jwt.PyJWKClient(d["jwks_uri"]).get_signing_key_from_jwt(tok["id_token"]).key
@@ -61,8 +67,8 @@ def oidc_finish(request: Request, code, state):
     claims["acr"] = claims.get("acr")
     return claims, tok.get("id_token")
 
-def logout_url(id_token=None):
+def logout_url(id_token=None, request: Request = None):
     if not oidc_enabled(): return "/login"
-    p = {"post_logout_redirect_uri": f"{PORTAL_PUBLIC_URL}/login", "client_id": OIDC_CLIENT_ID}
+    p = {"post_logout_redirect_uri": f"{portal_base(request)}/login", "client_id": OIDC_CLIENT_ID}
     if id_token: p["id_token_hint"] = id_token
     return discovery()["end_session_endpoint"] + "?" + urlencode(p)

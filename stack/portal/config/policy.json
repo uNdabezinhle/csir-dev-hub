@@ -1,28 +1,169 @@
 {
   "_comment": "Quota defaults per role (effective quota = most generous role the user holds, unless a user override exists), reclaim policy, network profiles and FinOps tiers. Costs are ILLUSTRATIVE placeholders - replace with the Technical Annex costing.",
   "role_quotas": {
-    "hub-admin":       {"max_workspaces": 10, "max_cpu": 16, "max_mem_gb": 32},
-    "image-publisher": {"max_workspaces": 4,  "max_cpu": 8,  "max_mem_gb": 16},
-    "project-owner":   {"max_workspaces": 4,  "max_cpu": 8,  "max_mem_gb": 16},
-    "engineer":        {"max_workspaces": 3,  "max_cpu": 6,  "max_mem_gb": 12},
-    "auditor":         {"max_workspaces": 1,  "max_cpu": 2,  "max_mem_gb": 4},
-    "guest":           {"max_workspaces": 1,  "max_cpu": 1,  "max_mem_gb": 2}
+    "hub-admin": {
+      "max_workspaces": 10,
+      "max_cpu": 16,
+      "max_mem_gb": 32
+    },
+    "image-publisher": {
+      "max_workspaces": 4,
+      "max_cpu": 8,
+      "max_mem_gb": 16
+    },
+    "project-owner": {
+      "max_workspaces": 4,
+      "max_cpu": 8,
+      "max_mem_gb": 16
+    },
+    "engineer": {
+      "max_workspaces": 3,
+      "max_cpu": 6,
+      "max_mem_gb": 12
+    },
+    "auditor": {
+      "max_workspaces": 1,
+      "max_cpu": 2,
+      "max_mem_gb": 4
+    },
+    "guest": {
+      "max_workspaces": 1,
+      "max_cpu": 1,
+      "max_mem_gb": 2
+    }
   },
-  "reclaim": {"idle_stop_minutes": 120, "stopped_delete_days": 14, "guest_max_age_days": 7, "auto_apply": true, "delete_enabled": false},
+  "reclaim": {
+    "idle_stop_minutes": 120,
+    "stopped_delete_days": 14,
+    "guest_max_age_days": 7,
+    "auto_apply": true,
+    "delete_enabled": false,
+    "exempt": [
+      "admin/demo-*"
+    ]
+  },
   "network_profiles": {
-    "dev": {"description": "Internet egress allowed (package mirrors, git)", "roles": ["hub-admin","image-publisher","project-owner","engineer","guest"]},
-    "isolated": {"description": "No egress; only the Dev Hub control plane (RANGE / Kali, sensitive data)", "roles": ["hub-admin","image-publisher","project-owner","engineer"]},
-    "windows-licensed": {"description": "Windows VMs; consumes a licence seat; KMS reachable", "roles": ["hub-admin","image-publisher","project-owner","engineer"], "licence_seats": 10}
+    "dev": {
+      "description": "Internet egress allowed (package mirrors, git)",
+      "roles": [
+        "hub-admin",
+        "image-publisher",
+        "project-owner",
+        "engineer",
+        "guest"
+      ]
+    },
+    "isolated": {
+      "description": "No egress; only the Dev Hub control plane (RANGE / Kali, sensitive data)",
+      "roles": [
+        "hub-admin",
+        "image-publisher",
+        "project-owner",
+        "engineer"
+      ]
+    },
+    "windows-licensed": {
+      "description": "Windows VMs; consumes a licence seat; KMS reachable",
+      "roles": [
+        "hub-admin",
+        "image-publisher",
+        "project-owner",
+        "engineer"
+      ],
+      "licence_pool": "windows-kms"
+    }
   },
   "finops": {
     "currency": "ZAR",
     "active_tier": "70",
     "hours_per_month_with_autostop": 176,
     "tiers": {
-      "30": {"users": 30, "vcpu": 96,  "ram_gb": 384,  "storage_tb": 8,  "monthly_cost": 38000},
-      "40": {"users": 40, "vcpu": 128, "ram_gb": 512,  "storage_tb": 12, "monthly_cost": 48000},
-      "60": {"users": 60, "vcpu": 192, "ram_gb": 768,  "storage_tb": 16, "monthly_cost": 66000},
-      "70": {"users": 70, "vcpu": 256, "ram_gb": 1024, "storage_tb": 20, "monthly_cost": 78000}
+      "30": {
+        "users": 30,
+        "vcpu": 96,
+        "ram_gb": 384,
+        "storage_tb": 8,
+        "monthly_cost": 38000
+      },
+      "40": {
+        "users": 40,
+        "vcpu": 128,
+        "ram_gb": 512,
+        "storage_tb": 12,
+        "monthly_cost": 48000
+      },
+      "60": {
+        "users": 60,
+        "vcpu": 192,
+        "ram_gb": 768,
+        "storage_tb": 16,
+        "monthly_cost": 66000
+      },
+      "70": {
+        "users": 70,
+        "vcpu": 256,
+        "ram_gb": 1024,
+        "storage_tb": 20,
+        "monthly_cost": 78000
+      }
+    },
+    "billing": {
+      "_comment": "rate_source 'tier' derives per-unit rates from the active hardware tier; 'fixed' uses fixed_rates. Illustrative ZAR values.",
+      "rate_source": "tier",
+      "fixed_rates": {
+        "per_vcpu_hour": 0.45,
+        "per_gb_hour": 0.12
+      },
+      "per_storage_gb_month": 1.8,
+      "default_disk_gb": 20
     }
+  },
+  "licensing": {
+    "_comment": "Seat pools for the windows-licensed profile. Seeded into the portal DB on first start; admins resize pools in Admin -> Licences. Costs are illustrative.",
+    "pools": [
+      {
+        "id": "windows-kms",
+        "product": "Windows 11 Enterprise / Server 2025 (KMS volume licence)",
+        "activation": "kms",
+        "kms_host": "kms.csir.local:1688",
+        "seats": 10,
+        "cost_per_seat_month": 350.0,
+        "release_on_stop": false
+      },
+      {
+        "id": "windows-eval",
+        "product": "Windows Server 2022 evaluation (180-day, PoC/lab only)",
+        "activation": "evaluation",
+        "kms_host": "",
+        "seats": 2,
+        "cost_per_seat_month": 0.0,
+        "release_on_stop": true
+      }
+    ],
+    "profile_pool": {
+      "windows-licensed": "windows-kms"
+    },
+    "template_pool": {},
+    "role_max_seats": {
+      "hub-admin": 5,
+      "image-publisher": 2,
+      "project-owner": 2,
+      "engineer": 1,
+      "auditor": 0,
+      "guest": 0
+    }
+  },
+  "image_scanning": {
+    "_comment": "Publish gate for catalog items with an 'image'. Hub-admins can change these at runtime (Admin -> Images).",
+    "enabled": true,
+    "trivy_image": "aquasec/trivy:0.76.2",
+    "cache_volume": "csir-devhub_trivy-cache",
+    "mem_limit": "1g",
+    "block_on_critical": true,
+    "max_critical": 0,
+    "require_approval": true,
+    "allow_risk_acceptance": true,
+    "risk_acceptance_days": 30,
+    "enforce_on_create": false
   }
 }

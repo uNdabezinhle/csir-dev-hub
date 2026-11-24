@@ -4,11 +4,11 @@ from .config import ROLE_IDS, GROUP_TO_ROLE, ROLES
 P_ALL = "*"
 PERMISSIONS = {
     "hub-admin":       {P_ALL},
-    "image-publisher": {"workspace.own", "catalog.manage", "images.view", "health.view"},
-    "project-owner":   {"workspace.own", "projects.manage", "projects.view_workspaces", "finops.view"},
+    "image-publisher": {"workspace.own", "catalog.manage", "images.view", "images.scan", "images.approve", "health.view", "licences.view"},
+    "project-owner":   {"workspace.own", "projects.manage", "projects.view_workspaces", "finops.view", "billing.own_projects"},
     "engineer":        {"workspace.own"},
     "auditor":         {"workspace.view_all", "users.view", "audit.view", "images.view", "quotas.view",
-                        "health.view", "finops.view", "projects.view_workspaces"},
+                        "health.view", "finops.view", "projects.view_workspaces", "licences.view", "kvm.view"},
     "guest":           {"workspace.own"},
 }
 CODER_SITE_ROLES = {r["id"]: r["coder_roles"] for r in ROLES["roles"]}

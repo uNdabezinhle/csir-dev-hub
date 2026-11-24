@@ -10,7 +10,9 @@
  {% if can(user,'images.view') or can(user,'catalog.manage') %}<a href="/admin/images">Images</a>{% endif %}
  {% if can(user,'quotas.view') or can(user,'quotas.manage') %}<a href="/admin/quotas">Quotas</a>{% endif %}
  {% if can(user,'workspace.view_all') %}<a href="/admin/reclaim">Reclaim</a>{% endif %}
- {% if can(user,'finops.view') %}<a href="/admin/finops">FinOps</a>{% endif %}
+ {% if can(user,'licences.view') %}<a href="/admin/licences">Licences</a>{% endif %}
+ {% if can(user,'finops.view') %}<a href="/admin/finops">FinOps</a> <a href="/admin/billing">Billing</a>{% endif %}
+ {% if can(user,'kvm.view') or can(user,'health.view') %}<a href="/admin/kvm">KVM</a>{% endif %}
  {% if can(user,'audit.view') %}<a href="/admin/audit">Audit</a>{% endif %}
  {% if can(user,'health.view') %}<a href="/admin/health">Health</a>{% endif %}
 </nav>

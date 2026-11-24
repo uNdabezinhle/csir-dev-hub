@@ -1,6 +1,6 @@
 """Idle reclaim / lifecycle policy (FinOps): stop idle running workspaces, flag (optionally delete) long-stopped ones,
 expire guest workspaces. Runs every 10 minutes in the background and on demand (dry-run or apply) from the admin console."""
-import time, threading, logging, datetime as dt
+import time, threading, logging, fnmatch, datetime as dt
 from . import coder, db, audit
 from .config import POLICY
 from .metrics import RECLAIMED
@@ -16,7 +16,9 @@ def _ts(s):
 def evaluate():
     p = policy(); now = time.time(); plan = []
     guests = {u["username"] for u in db.q("SELECT username, roles FROM users") if '"guest"' in u["roles"] and '"engineer"' not in u["roles"]}
+    exempt = p.get("exempt", [])
     for ws in coder.workspaces():
+        if any(fnmatch.fnmatch(f"{ws['owner_name']}/{ws['name']}", pat) for pat in exempt): continue   # pinned demo/shared workspaces
         st = coder.ws_status(ws); last = _ts(ws.get("last_used_at") or "") or _ts(ws["latest_build"]["created_at"])
         idle_min = (now - last) / 60 if last else 0
         created = _ts(ws.get("created_at", "")) or now

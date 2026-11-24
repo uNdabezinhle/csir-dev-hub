@@ -59,6 +59,10 @@ def init():
         for item in CATALOG_SEED:
             c.execute("INSERT OR IGNORE INTO catalog(template, data, published, updated_by, updated_at) VALUES (?,?,?,?,?)",
                       (item["template"], json.dumps(item), 1 if item.get("published") else 0, "seed", time.time()))
+            # non-destructive migration: add keys introduced in newer seeds (e.g. 'image') without touching edited values
+            row = c.execute("SELECT data FROM catalog WHERE template=?", (item["template"],)).fetchone()
+            d = json.loads(row[0]); new = {k: v for k, v in item.items() if k not in d and k != "published"}
+            if new: c.execute("UPDATE catalog SET data=? WHERE template=?", (json.dumps({**d, **new}), item["template"]))
 
 def get_setting(key, default=None):
     r = one("SELECT value FROM settings WHERE key=?", (key,))

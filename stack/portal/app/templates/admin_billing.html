@@ -1,0 +1,23 @@
+{% extends "base.html" %}{% block body %}
+<h1>Billing &amp; usage export</h1>
+<form class="row card" method="get" action="/admin/billing">
+<div><label>From</label><input type="date" name="from" value="{{ frm }}"></div><div><label>To</label><input type="date" name="to" value="{{ to }}"></div>
+<div><label>Group by</label><select name="group_by">{% for g in ['user','project','workspace'] %}<option {% if g==group_by %}selected{% endif %}>{{ g }}</option>{% endfor %}</select></div>
+<button class="btn teal">Show</button>
+<a class="btn light" href="/api/billing/usage?from={{ frm }}&to={{ to }}&group_by={{ group_by }}&format=csv">Export CSV</a>
+<a class="btn light" href="/api/billing/usage?from={{ frm }}&to={{ to }}&group_by={{ group_by }}&format=json">Export JSON</a></form>
+<div class="card"><p>Rates ({{ meta.rates.source }}): {{ '%.4f'|format(meta.rates.per_vcpu_hour) }} {{ meta.rates.currency }}/vCPU-h &middot; {{ '%.4f'|format(meta.rates.per_gb_hour) }}/GB-h &middot;
+storage {{ meta.rates.per_storage_gb_month }}/GB-month ({{ meta.rates.default_disk_gb }} GB per workspace) &middot; licences per pool (Admin &rarr; Licences).
+Prometheus actuals: {% if meta.prometheus %}<span class="badge ok">available</span>{% else %}<span class="badge err">unavailable</span>{% endif %}</p>
+<table><tr><th>{{ group_by|capitalize }}</th>{% if group_by=='workspace' %}<th>Template</th><th>Project</th><th>Alloc</th>{% else %}<th>Workspaces</th>{% endif %}
+<th>Running h</th><th>vCPU-h</th><th>GB-h</th><th>CPU core-h used</th><th>Seat-days</th><th>Compute</th><th>Storage</th><th>Licence</th><th>Total ({{ meta.rates.currency }})</th></tr>
+{% for r in rows %}<tr>{% if group_by=='workspace' %}<td>{{ r.workspace }}{% if r.deleted %} <span class="badge">deleted</span>{% endif %}</td><td>{{ r.template }}</td><td>{{ r.project }}</td><td>{{ r.vcpu }} / {{ r.mem_gb }} GB</td>
+{% else %}<td>{{ r[group_by] }}</td><td>{{ r.workspaces }}</td>{% endif %}
+<td>{{ '%.2f'|format(r.running_hours) }}</td><td>{{ '%.1f'|format(r.vcpu_hours) }}</td><td>{{ '%.1f'|format(r.gb_hours) }}</td><td>{{ '%.3f'|format(r.cpu_core_hours_used or 0) }}</td><td>{{ '%.2f'|format(r.licence_seat_days) }}</td>
+<td>{{ '%.2f'|format(r.cost_compute) }}</td><td>{{ '%.2f'|format(r.cost_storage) }}</td><td>{{ '%.2f'|format(r.cost_licence) }}</td><td><b>{{ '%.2f'|format(r.cost_total) }}</b></td></tr>
+{% else %}<tr><td colspan="12" class="muted">No usage in this period</td></tr>{% endfor %}
+<tr><th>Total</th><th colspan="{{ 4 if group_by=='workspace' else 1 }}"></th><th>{{ '%.2f'|format(meta.totals.running_hours) }}</th><th>{{ '%.1f'|format(meta.totals.vcpu_hours) }}</th><th>{{ '%.1f'|format(meta.totals.gb_hours) }}</th><th></th><th></th>
+<th>{{ '%.2f'|format(meta.totals.cost_compute) }}</th><th>{{ '%.2f'|format(meta.totals.cost_storage) }}</th><th>{{ '%.2f'|format(meta.totals.cost_licence) }}</th><th>{{ '%.2f'|format(meta.totals.cost_total) }}</th></tr></table>
+<p class="muted">Running hours come from Coder build history (start &rarr; stop/delete); actual CPU from Prometheus/cAdvisor (container workspaces);
+licence seat-days from the licence ledger. API: <code>GET /api/billing/usage?from=YYYY-MM-DD&amp;to=YYYY-MM-DD&amp;group_by=user|project|workspace&amp;format=json|csv</code></p></div>
+{% endblock %}

@@ -1,0 +1,7 @@
+{% extends "base.html" %}{% block body %}
+<h1>Scan #{{ s.id }}: <code>{{ s.image }}</code></h1>
+<div class="card"><p>{{ s.status }} &middot; {{ s.os }} &middot; {{ s.scanner }} &middot; requested by {{ s.requested_by }} &middot; {{ s.finished_at|ts }}<br>
+<span class="badge err">CRITICAL {{ s.critical }}</span> <span class="badge flag">HIGH {{ s.high }}</span> <span class="badge">MEDIUM {{ s.medium }}</span> <span class="badge">LOW {{ s.low }}</span></p>
+<table><tr><th>CVE</th><th>Severity</th><th>Package</th><th>Installed</th><th>Fixed</th><th>Target</th></tr>
+{% for v in vulns %}<tr><td>{{ v.VulnerabilityID }}</td><td>{{ v.Severity }}</td><td>{{ v.PkgName }}</td><td>{{ v.InstalledVersion }}</td><td>{{ v.FixedVersion or '' }}</td><td class="muted">{{ v.Target }}</td></tr>{% endfor %}</table></div>
+{% endblock %}

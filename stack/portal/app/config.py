@@ -19,6 +19,8 @@ CODER_URL = os.environ.get("CODER_URL", "http://coder:3000")              # serv
 CODER_PUBLIC_URL = os.environ.get("CODER_PUBLIC_URL", f"http://{HOST_IP}:3000")  # browser links
 CODER_TOKEN = os.environ.get("CODER_SESSION_TOKEN", "")
 PORTAL_PUBLIC_URL = os.environ.get("PORTAL_PUBLIC_URL", f"http://{HOST_IP}:8088")
+# LAN URL; OIDC uses it when the browser came in on it (SSO keeps working on the LAN while a tunnel URL is the public one)
+PORTAL_LOCAL_URL = os.environ.get("PORTAL_LOCAL_URL", f"http://{HOST_IP}:8088")
 OIDC_ISSUER = os.environ.get("OIDC_ISSUER_URL", "")
 OIDC_CLIENT_ID = os.environ.get("PORTAL_OIDC_CLIENT_ID", "devhub-portal")
 OIDC_CLIENT_SECRET = os.environ.get("PORTAL_OIDC_SECRET", "")

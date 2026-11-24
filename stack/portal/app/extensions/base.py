@@ -35,6 +35,21 @@ class BackupProvider:
     """Home-volume snapshot/backup (e.g. restic to on-prem object storage, ZFS/Ceph snapshots)."""
     name = "stub (not implemented; volumes persist on the Docker host)"
 
-REGISTRY = {"licence": LicenseBroker(), "kvm": KvmProvider(), "scanner": ImageScanner(),
-            "approval": ApprovalWorkflow(), "billing": BillingExporter(), "backup": BackupProvider()}
+class BackupStatus:
+    """Reports the result of scripts/backup.sh / restore.sh --verify (they copy status.json into the portal data volume).
+    Backups themselves run on the host (cron/systemd timer) because they need pg_dump/slapcat/docker volume access."""
+    name = "scripts/backup.sh + restore.sh (pg_dump, slapcat, volume tars; retention; verified restore)"
+    def status(self):
+        import json, os
+        f = os.environ.get("BACKUP_STATUS_FILE", "/data/backup-status.json")
+        try: return json.load(open(f))
+        except Exception as e: return {"status": "unknown", "detail": f"{f}: {type(e).__name__}"}
+
+# Phase 2: real implementations replace the PoC stubs (stub classes above are kept as the interface reference).
+from .licence import LicenseBroker as _Licence
+from .scanner import ImageScanner as _Scanner
+from .billing import BillingExporter as _Billing
+from .kvm import KvmProvider as _Kvm
+REGISTRY = {"licence": _Licence(), "kvm": _Kvm(), "scanner": _Scanner(),
+            "approval": ApprovalWorkflow(), "billing": _Billing(), "backup": BackupStatus()}
 def get(name): return REGISTRY[name]

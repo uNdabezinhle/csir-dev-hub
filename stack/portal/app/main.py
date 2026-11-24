@@ -53,7 +53,7 @@ def need(request, perm=None):
 # ------------------------------------------------------------------ startup
 @app.on_event("startup")
 def startup():
-    db.init(); auth.bootstrap_admin(); reclaim.start()
+    db.init(); ext("licence").init(); ext("scanner").init(); auth.bootstrap_admin(); reclaim.start()
     threading.Thread(target=_metrics_loop, daemon=True).start()
     log.info("portal started; coder healthy=%s", coder.healthy())
 
@@ -78,6 +78,8 @@ def reconcile():
             c.execute("INSERT INTO workspaces(id,owner,name,template,project_id,profile,cpu,mem_gb,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                       (wid, w["owner_name"], w["name"], w["template_name"], None, bp.get("network_profile", "dev"),
                        int(bp.get("cpu", 0) or 0), int(bp.get("memory", 0) or 0), "import", time.time()))
+    try: ext("licence").reconcile(live)          # return seats of workspaces deleted outside the portal
+    except Exception as e: log.warning("licence reconcile: %s", e)
     return live
 
 def refresh_metrics():
@@ -151,7 +153,7 @@ def logout(request: Request):
     u = request.session.get("user"); idt = request.session.get("id_token")
     src = (db.one("SELECT auth_source FROM users WHERE username=?", (u,)) or {}).get("auth_source")
     request.session.clear(); audit.log(u, "logout", ip=ip(request))
-    return RedirectResponse(auth.logout_url(idt) if src == "oidc" else "/login", 303)
+    return RedirectResponse(auth.logout_url(idt, request) if src == "oidc" else "/login", 303)
 
 # ------------------------------------------------------------------ helpers
 def catalog_items(user, include_unpublished=False):
@@ -214,9 +216,13 @@ def create_ws(request: Request, template: str = Form(...), name: str = Form(...)
     if project and project["id"] not in [p["id"] for p in user_projects(u)]: return deny("project", "You are not a member of that project")
     v = quotas.check(u, cpu, memory, project)
     if v: return deny("quota", "Quota exceeded: " + "; ".join(v))
-    if profile == "windows-licensed":
-        used = db.one("SELECT COUNT(*) n FROM workspaces WHERE profile='windows-licensed' AND deleted_at IS NULL")["n"]
-        if not ext("licence").available(used): return deny("licence", "No Windows licence seats available")
+    from .extensions.scanner import policy as scan_policy
+    gate = ext("scanner").gate(item.get("image")) if item.get("image") and scan_policy().get("enforce_on_create") else []
+    if gate: return deny("image", "Image not approved: " + "; ".join(gate))
+    lic = ext("licence"); pool = lic.pool_for(profile, template); seat = None
+    if pool:   # reserve a licence seat before provisioning; returned again if provisioning fails
+        try: seat = lic.checkout(pool, u, u["username"], workspace=f"{u['username']}/{name}", project=project, ip=ip(request))
+        except Exception as e: return deny("licence", f"Licence: {e}")
     try:
         coder.ensure_user(u["username"], u["email"], u["full_name"], "oidc" if u["auth_source"] == "oidc" else "password")
         if "rdp" in item.get("access", []): secrets_store.ensure_rdp_password(u["username"])
@@ -225,8 +231,11 @@ def create_ws(request: Request, template: str = Form(...), name: str = Form(...)
         params = {k: v for k, v in params.items() if k in tparams}
         ws = coder.create_workspace(u["username"], template, name, params, ttl_ms=8 * 3600 * 1000)
     except Exception as e:
+        if seat: lic.release(u["username"], "provisioning failed", seat_id=seat["id"], ip=ip(request))
         audit.log(u["username"], "workspace.create", f"{u['username']}/{name}", str(e)[:300], ip(request), "error")
         flash(request, f"Provisioning failed: {e}", "err"); return RedirectResponse("/", 303)
+    if seat:
+        with db.tx() as c: c.execute("UPDATE licence_seats SET workspace_id=? WHERE id=?", (ws["id"], seat["id"]))
     with db.tx() as c:
         c.execute("INSERT INTO workspaces(id,owner,name,template,project_id,profile,cpu,mem_gb,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                   (ws["id"], u["username"], name, template, project["id"] if project else None, profile, cpu, memory, u["username"], time.time()))
@@ -246,6 +255,14 @@ def ws_action(request: Request, ws_id: str, action: str):
     if action not in ("start", "stop", "delete", "restart", "update"): raise HTTPException(400)
     ws = coder.workspace(ws_id)
     if not _ws_authorised(u, ws): raise HTTPException(403)
+    lic = ext("licence"); led = db.one("SELECT * FROM workspaces WHERE id=?", (ws_id,)) or {}
+    pool = lic.pool_for(led.get("profile"), ws["template_name"])
+    if pool and action in ("start", "restart", "update") and not lic.seat_for_ws(ws_id):   # seat was released on stop
+        owner = db.one("SELECT * FROM users WHERE username=?", (ws["owner_name"],)); owner = dict(owner, roles=json.loads(owner["roles"])) if owner else None
+        proj = db.one("SELECT * FROM projects WHERE id=?", (led.get("project_id"),)) if led.get("project_id") else None
+        try: lic.checkout(pool, owner, u["username"], workspace_id=ws_id, workspace=f"{ws['owner_name']}/{ws['name']}", project=proj, ip=ip(request))
+        except Exception as e:
+            flash(request, f"{action} denied - licence: {e}", "err"); return RedirectResponse(request.headers.get("referer", "/"), 303)
     try:
         if action == "restart": coder.build(ws_id, "stop"); time.sleep(2); coder.build(ws_id, "start")
         elif action == "update":
@@ -254,6 +271,9 @@ def ws_action(request: Request, ws_id: str, action: str):
         else: coder.build(ws_id, action)
         if action == "delete":
             with db.tx() as c: c.execute("UPDATE workspaces SET deleted_at=? WHERE id=?", (time.time(), ws_id))
+            lic.release(u["username"], "workspace deleted", workspace_id=ws_id, ip=ip(request))
+        if action == "stop" and pool and (lic.pool(pool) or {}).get("release_on_stop"):
+            lic.release(u["username"], "workspace stopped (release_on_stop)", workspace_id=ws_id, ip=ip(request))
         WS_ACTIONS.labels(action=action, template=ws["template_name"]).inc()
         audit.log(u["username"], f"workspace.{action}", f"{ws['owner_name']}/{ws['name']}", ip=ip(request))
         flash(request, f"{action.capitalize()} requested for {ws['owner_name']}/{ws['name']}")
@@ -270,10 +290,17 @@ def ws_rdp(request: Request, ws_id: str):
     if not _ws_authorised(u, ws): raise HTTPException(403)
     if coder.ws_status(ws) != "running": flash(request, "Start the workspace first", "err"); return RedirectResponse("/", 303)
     slug = f"{ws['owner_name']}-{ws['name']}".lower()
-    pw = secrets_store.get(ws["owner_name"], "rdp_password")
+    meta = {m["key"]: m["value"] for r in ws.get("latest_build", {}).get("resources", []) for m in (r.get("metadata") or [])}
+    pw = meta.get("rdp_password") or secrets_store.get(ws["owner_name"], "rdp_password")   # VM templates: per-workspace credential
     if not pw: flash(request, "No RDP credential for this workspace owner", "err"); return RedirectResponse("/", 303)
+    item = next((json.loads(r["data"]) for r in db.q("SELECT data FROM catalog WHERE template=?", (ws["template_name"],))), {})
     try:
-        url = guac.rdp_link(u["username"], ws, f"coder-{slug}", pw, f"csir-ws-{slug}")
+        if item.get("kind") == "vm":   # libvirt VM: DNAT on the libvirt host, reachable only from guacd
+            host, port = ext("kvm").rdp_forward(f"csir-{slug}")
+            url = guac.rdp_link(u["username"], ws, host, pw, None, port=port, rdp_user=item.get("rdp_user", "coder"),
+                                security=item.get("rdp_security", "any"))
+        else:
+            url = guac.rdp_link(u["username"], ws, f"coder-{slug}", pw, f"csir-ws-{slug}")
     except Exception as e:
         flash(request, f"RDP broker error: {e}", "err"); return RedirectResponse("/", 303)
     audit.log(u["username"], "workspace.rdp", f"{ws['owner_name']}/{ws['name']}", "guacamole session token issued (5 min)", ip(request))
@@ -421,9 +448,13 @@ def admin_images(request: Request):
         import docker
         for im in docker.from_env().images.list(filters={"label": "org.csir.devhub.image"}):
             images.append({"tags": im.tags, "id": im.short_id, "size_mb": round(im.attrs["Size"] / 1e6), "created": im.attrs["Created"][:16],
-                           "kind": im.labels.get("org.csir.devhub.image"), "scan": ext("scanner").scan(im.tags[0] if im.tags else im.id)["status"]})
+                           "kind": im.labels.get("org.csir.devhub.image"), "scan": ext("scanner").scan(im.tags[0] if im.tags else im.id),
+                           "approval": ext("scanner").approval(im.tags[0]) if im.tags else None,
+                           "gate": ext("scanner").gate(im.tags[0]) if im.tags else []})
     except Exception as e: images.append({"tags": [f"docker API unavailable: {e}"], "id": "", "size_mb": 0, "created": "", "kind": "", "scan": ""})
-    return render(request, "admin_images.html", u, catalog=catalog_items(u, True), templates=tmpls, images=images)
+    from .extensions.scanner import policy as scan_policy
+    return render(request, "admin_images.html", u, catalog=catalog_items(u, True), templates=tmpls, images=images,
+                  scans=ext("scanner").scans(30), scan_policy=scan_policy())
 
 @app.post("/admin/images/{template}")
 def admin_image_update(request: Request, template: str, published: int = Form(0), default_cpu: int = Form(2), default_mem: int = Form(2),
@@ -434,6 +465,11 @@ def admin_image_update(request: Request, template: str, published: int = Form(0)
     d = json.loads(r["data"]); d.update(default_cpu=default_cpu, default_mem=default_mem, description=description or d["description"])
     if published and not coder.template_by_name(template):
         flash(request, f"Cannot publish '{template}': no Coder template with that name has been pushed yet", "err"); return RedirectResponse("/admin/images", 303)
+    if published and not r["published"] and d.get("image"):
+        blockers = ext("scanner").gate(d["image"])
+        if blockers:
+            audit.log(u["username"], "catalog.publish", template, {"blocked": blockers}, ip(request), "denied")
+            flash(request, f"Cannot publish '{template}': " + "; ".join(blockers), "err"); return RedirectResponse("/admin/images", 303)
     with db.tx() as c: c.execute("UPDATE catalog SET data=?, published=?, updated_by=?, updated_at=? WHERE template=?",
                                  (json.dumps(d), published, u["username"], time.time(), template))
     audit.log(u["username"], "catalog.update", template, {"published": bool(published), "cpu": default_cpu, "mem": default_mem}, ip(request))
@@ -444,8 +480,7 @@ def admin_quotas(request: Request):
     u = need(request)
     if not (rbac.can(u, "quotas.view") or rbac.can(u, "quotas.manage")): raise HTTPException(403)
     return render(request, "admin_quotas.html", u, role_quotas=POLICY["role_quotas"], overrides=db.q("SELECT * FROM user_quotas ORDER BY username"),
-                  profiles=POLICY["network_profiles"], licence=ext("licence"),
-                  licence_used=db.one("SELECT COUNT(*) n FROM workspaces WHERE profile='windows-licensed' AND deleted_at IS NULL")["n"],
+                  profiles=POLICY["network_profiles"], pools=ext("licence").pools(), role_seats=POLICY.get("licensing", {}).get("role_max_seats", {}),
                   users=[r["username"] for r in db.q("SELECT username FROM users ORDER BY username")])
 
 @app.post("/admin/quotas")
@@ -552,6 +587,9 @@ def api_workspaces(request: Request):
     u = need(request); led = ledger_map()
     ws = coder.workspaces() if rbac.can(u, "workspace.view_all") else coder.workspaces(owner=u["username"])
     return [enrich(w, led) for w in ws]
+
+from . import phase2  # noqa: E402  (licences, image scans, billing, KVM routes)
+phase2.register(app, need, render, flash, ip)
 
 @app.get("/metrics")
 def metrics(): return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

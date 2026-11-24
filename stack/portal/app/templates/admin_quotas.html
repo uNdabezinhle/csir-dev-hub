@@ -10,8 +10,10 @@
 {% if can(user,'quotas.manage') %}<form method="post" action="/admin/quotas" class="row" style="margin-top:10px"><div><label>User</label><select name="username">{% for u2 in users %}<option>{{ u2 }}</option>{% endfor %}</select></div>
 <div><label>WS</label><input name="max_workspaces" type="number" value="3" style="width:60px"></div><div><label>vCPU</label><input name="max_cpu" type="number" value="6" style="width:60px"></div>
 <div><label>GB</label><input name="max_mem_gb" type="number" value="12" style="width:60px"></div><div><label>Note / ticket</label><input name="note"></div><button class="btn teal">Save override</button></form>{% endif %}</div>
+<h2>Licence seat quotas (per role)</h2><div class="card"><table><tr>{% for r,n in role_seats.items() %}<th>{{ r }}</th>{% endfor %}</tr><tr>{% for r,n in role_seats.items() %}<td>{{ n }}</td>{% endfor %}</tr></table>
+<p class="muted">Max concurrent licence seats per user (most generous role). Project caps: <code>projects.max_licences</code> (Admin &rarr; Licences).</p></div>
 <h2>Network profiles</h2><div class="card"><table><tr><th>Profile</th><th>Description</th><th>Allowed roles</th><th>Implementation</th></tr>
-{% for k,p in profiles.items() %}<tr><td><span class="badge">{{ k }}</span></td><td>{{ p.description }}{% if k=='windows-licensed' %}<br>Licence seats: {{ licence_used }} / {{ licence.seats }} used ({{ licence.name }}){% endif %}</td>
+{% for k,p in profiles.items() %}<tr><td><span class="badge">{{ k }}</span></td><td>{{ p.description }}{% if p.licence_pool %}{% for pl in pools if pl.id == p.licence_pool %}<br>Licence pool <code>{{ pl.id }}</code>: {{ pl.used }} / {{ pl.seats }} seats used (<a href="/admin/licences">manage</a>){% endfor %}{% endif %}</td>
 <td>{% for r in p.roles %}<span class="badge">{{ r }}</span>{% endfor %}</td>
-<td class="muted">{% if k=='dev' %}per-workspace bridge network with NAT egress{% elif k=='isolated' %}per-workspace <code>internal</code> network + control-plane-only gateway (no internet){% else %}KVM/libvirt network with KMS access (planned; template stub){% endif %}</td></tr>{% endfor %}</table></div>
+<td class="muted">{% if k=='dev' %}per-workspace bridge network with NAT egress{% elif k=='isolated' %}per-workspace <code>internal</code> network + control-plane-only gateway (no internet){% else %}libvirt network <code>csir-windows-licensed</code> (KMS only) + licence seat checkout{% endif %}</td></tr>{% endfor %}</table></div>
 {% endblock %}

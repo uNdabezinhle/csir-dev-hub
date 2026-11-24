@@ -1,21 +1,112 @@
 {
-  "_comment": "Workspace catalog seed. Image publishers can publish/unpublish and edit defaults in the portal (stored in the portal DB).",
-  "items": [
-    {"template": "ubuntu-server", "display_name": "Ubuntu Server (VS Code)", "os": "Ubuntu 24.04 / 26.04 LTS", "kind": "container",
-     "description": "Docker dev environment with VS Code Server in the browser, SSH via coder ssh, persistent home.",
-     "profiles": ["dev", "isolated"], "default_cpu": 2, "default_mem": 2, "published": true,
-     "params": {"ubuntu_version": "24.04"}, "access": ["vscode", "ssh"]},
-    {"template": "ubuntu-desktop", "display_name": "Ubuntu Desktop (XFCE + RDP)", "os": "Ubuntu 24.04 LTS", "kind": "container",
-     "description": "Full XFCE desktop: brokered RDP through Guacamole, noVNC in the browser, native RDP via coder port-forward, plus VS Code.",
-     "profiles": ["dev", "isolated"], "default_cpu": 2, "default_mem": 4, "published": true,
-     "params": {}, "access": ["vscode", "rdp", "novnc", "ssh"]},
-    {"template": "kali", "display_name": "Kali Linux (RANGE)", "os": "Kali Rolling", "kind": "container",
-     "description": "Security tooling workspace for the cyber range. Defaults to the isolated (no-egress) network profile.",
-     "profiles": ["isolated", "dev"], "default_cpu": 2, "default_mem": 2, "published": true,
-     "params": {}, "access": ["vscode", "ssh"], "min_role": "engineer"},
-    {"template": "windows-kvm", "display_name": "Windows 11 (KVM, licensed)", "os": "Windows 11 / Server 2025", "kind": "vm",
-     "description": "KVM/QEMU virtual machine via libvirt, RDP brokered through Guacamole. Requires a Windows licence seat.",
-     "profiles": ["windows-licensed"], "default_cpu": 4, "default_mem": 8, "published": false,
-     "params": {}, "access": ["rdp"], "min_role": "engineer"}
-  ]
+ "_comment": "Workspace catalog seed. Image publishers can publish/unpublish and edit defaults in the portal (stored in the portal DB).",
+ "items": [
+  {
+   "template": "ubuntu-server",
+   "display_name": "Ubuntu Server (VS Code)",
+   "os": "Ubuntu 24.04 / 26.04 LTS",
+   "kind": "container",
+   "description": "Docker dev environment with VS Code Server in the browser, SSH via coder ssh, persistent home.",
+   "profiles": [
+    "dev",
+    "isolated"
+   ],
+   "default_cpu": 2,
+   "default_mem": 2,
+   "published": true,
+   "params": {
+    "ubuntu_version": "24.04"
+   },
+   "access": [
+    "vscode",
+    "ssh"
+   ],
+   "image": "csir-devhub/ubuntu-server:24.04"
+  },
+  {
+   "template": "ubuntu-desktop",
+   "display_name": "Ubuntu Desktop (XFCE + RDP)",
+   "os": "Ubuntu 24.04 LTS",
+   "kind": "container",
+   "description": "Full XFCE desktop: brokered RDP through Guacamole, noVNC in the browser, native RDP via coder port-forward, plus VS Code.",
+   "profiles": [
+    "dev",
+    "isolated"
+   ],
+   "default_cpu": 2,
+   "default_mem": 4,
+   "published": true,
+   "params": {},
+   "access": [
+    "vscode",
+    "rdp",
+    "novnc",
+    "ssh"
+   ],
+   "image": "csir-devhub/ubuntu-desktop:24.04"
+  },
+  {
+   "template": "kali",
+   "display_name": "Kali Linux (RANGE)",
+   "os": "Kali Rolling",
+   "kind": "container",
+   "description": "Security tooling workspace for the cyber range. Defaults to the isolated (no-egress) network profile.",
+   "profiles": [
+    "isolated",
+    "dev"
+   ],
+   "default_cpu": 2,
+   "default_mem": 2,
+   "published": true,
+   "params": {},
+   "access": [
+    "vscode",
+    "ssh"
+   ],
+   "min_role": "engineer",
+   "image": "csir-devhub/kali:rolling"
+  },
+  {
+   "template": "windows-kvm",
+   "display_name": "Windows Server 2022 / 11 (KVM, licensed)",
+   "os": "Windows Server 2022 eval / Windows 11 Enterprise",
+   "kind": "vm",
+   "description": "KVM/QEMU VM via libvirt from a Packer-built, sysprepped golden image; Coder agent via cloudbase-init; RDP brokered through Guacamole (no 3389 on the LAN). Consumes a licence seat.",
+   "profiles": [
+    "windows-licensed"
+   ],
+   "default_cpu": 2,
+   "default_mem": 4,
+   "published": false,
+   "params": {},
+   "access": [
+    "rdp"
+   ],
+   "min_role": "engineer",
+   "rdp_user": "coder",
+   "rdp_security": "nla"
+  },
+  {
+   "template": "ubuntu-vm",
+   "display_name": "Ubuntu VM (KVM/libvirt)",
+   "os": "Ubuntu 24.04 LTS (cloud image)",
+   "kind": "vm",
+   "description": "Full virtual machine on libvirt (own kernel, systemd, Docker-in-VM). CoW disk on a golden image, Coder agent via cloud-init. PoC box: QEMU TCG (no nested KVM).",
+   "profiles": [
+    "dev",
+    "isolated"
+   ],
+   "default_cpu": 2,
+   "default_mem": 2,
+   "published": true,
+   "params": {},
+   "access": [
+    "vscode",
+    "ssh",
+    "rdp"
+   ],
+   "min_role": "engineer",
+   "rdp_user": "coder"
+  }
+ ]
 }

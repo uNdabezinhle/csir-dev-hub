@@ -26,12 +26,12 @@ def attach_guacd(network_name):
         net.connect(g)
     return True
 
-def rdp_link(username, ws, hostname, rdp_password, network_name, ttl_s=300):
-    attach_guacd(network_name)
+def rdp_link(username, ws, hostname, rdp_password, network_name, ttl_s=300, port=3389, rdp_user="coder", security="any"):
+    if network_name: attach_guacd(network_name)   # VM workspaces: reached via the libvirt port-forward on the core network
     conn = f"{ws['name']} desktop"
     payload = {"username": username, "expires": int((time.time() + ttl_s) * 1000), "connections": {conn: {
-        "protocol": "rdp", "parameters": {"hostname": hostname, "port": "3389", "username": "coder", "password": rdp_password,
-        "security": "any", "ignore-cert": "true", "resize-method": "display-update", "enable-wallpaper": "false",
+        "protocol": "rdp", "parameters": {"hostname": hostname, "port": str(port), "username": rdp_user, "password": rdp_password,
+        "security": security, "ignore-cert": "true", "resize-method": "display-update", "enable-wallpaper": "false",
         "server-layout": "en-us-qwerty", "timezone": "Africa/Johannesburg"}}}}
     if GUAC_RECORDING:
         payload["connections"][conn]["parameters"].update({
