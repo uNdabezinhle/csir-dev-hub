@@ -1,0 +1,13 @@
+# Keep LF for everything that runs inside Linux containers or Git Bash (Windows checkouts too).
+*.sh text eol=lf
+*.py text eol=lf
+*.tf text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.sql text eol=lf
+*.ldif text eol=lf
+*.json text eol=lf
+*.env.example text eol=lf
+.env.* text eol=lf
+Dockerfile text eol=lf
+*.ps1 text eol=crlf

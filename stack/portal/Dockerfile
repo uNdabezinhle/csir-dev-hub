@@ -2,6 +2,8 @@
 FROM python:3.12-slim
 ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /srv
+# socat: used only by docker-compose.desktop.yml (relays localhost:<published port> to the in-network service)
+RUN apt-get update && apt-get install -y --no-install-recommends socat && rm -rf /var/lib/apt/lists/*
 COPY stack/portal/requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 COPY stack/portal/app ./app

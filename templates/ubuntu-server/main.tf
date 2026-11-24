@@ -94,8 +94,11 @@ locals {
   isolated   = data.coder_parameter.network_profile.value == "isolated"
   access_url = data.coder_workspace.me.access_url
   # In isolated mode the agent reaches Coder through a per-workspace gateway container.
-  agent_url = local.isolated ? "http://csir-gw-${local.ws_slug}:3000" : local.access_url
-  host_port = regex("^https?://[^/]+", local.access_url)
+  # Docker Desktop (Windows/macOS): an access URL on localhost is unreachable from workspace containers -> use
+  # host.docker.internal (resolved by Docker Desktop). No-op when the access URL is a LAN IP / DNS name.
+  reach_url = replace(local.access_url, "/localhost|127\\.0\\.0\\.1/", "host.docker.internal")
+  agent_url = local.isolated ? "http://csir-gw-${local.ws_slug}:3000" : local.reach_url
+  host_port = regex("^https?://[^/]+", local.reach_url)
 }
 
 # ---------------------------------------------------------------- agent

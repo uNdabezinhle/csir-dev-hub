@@ -2,6 +2,7 @@
 # Idempotent: creates guacamole_db + role in the shared postgres, loads the schema, starts guacd/guacamole and rotates
 # the default guacadmin/guacadmin password to GUACADMIN_PASSWORD (secrets/devhub.env). Never prints secrets.
 set -euo pipefail
+PY=${PYTHON:-python3}
 cd "$(dirname "$0")/.."
 export DOCKER_HOST="${DOCKER_HOST:-tcp://127.0.0.1:2375}"
 set -a; . ./.env; . ./secrets/devhub.env; set +a
@@ -25,10 +26,10 @@ GD=$(docker ps -qf label=com.docker.compose.service=guacd -f label=com.docker.co
 docker exec -u 0 "$GD" sh -c 'chown guacd:guacd /var/lib/guacamole/recordings && chmod 2775 /var/lib/guacamole/recordings'
 URL="http://127.0.0.1:${GUACAMOLE_PORT:-8089}/guacamole"
 for i in $(seq 1 60); do curl -sf -o /dev/null "$URL/" && break; sleep 3; done
-tok() { curl -s -X POST "$URL/api/tokens" --data-urlencode "username=guacadmin" --data-urlencode "password=$1" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("authToken",""))' 2>/dev/null; }
+tok() { curl -s -X POST "$URL/api/tokens" --data-urlencode "username=guacadmin" --data-urlencode "password=$1" | $PY -c 'import json,sys;d=json.load(sys.stdin);print(d.get("authToken",""))' 2>/dev/null; }
 T=$(tok guacadmin)
 if [ -n "$T" ]; then
-  python3 - "$URL" "$T" <<'PY'
+  $PY - "$URL" "$T" <<'PY'
 import json, os, sys, urllib.request
 url, tok = sys.argv[1], sys.argv[2]
 body = json.dumps({"oldPassword": "guacadmin", "newPassword": os.environ["GUACADMIN_PASSWORD"]}).encode()

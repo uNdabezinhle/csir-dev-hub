@@ -239,7 +239,7 @@ def enable_coder_oidc():
     issuer = f"{KC}/realms/{REALM}"
     p = f"{ROOT}/secrets/devhub.env"; lines = open(p).read().splitlines()
     lines = [f"OIDC_ISSUER_URL={issuer}" if l.startswith("OIDC_ISSUER_URL=") else l for l in lines]
-    open(p, "w").write("\n".join(lines) + "\n"); os.chmod(p, 0o600)
+    open(p, "w", newline="\n").write("\n".join(lines) + "\n"); os.chmod(p, 0o600)
     print("Coder: OIDC issuer set ->", issuer, "(run ./scripts/dc.sh up -d coder)")
 
 if __name__ == "__main__":

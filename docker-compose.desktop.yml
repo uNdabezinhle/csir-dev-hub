@@ -1,0 +1,28 @@
+# Overlay: Docker Desktop (Windows 11 / macOS laptop) - single-user local run at http://localhost:<port>.
+# Included by scripts/dc.sh when DESKTOP_MODE=true in .env (see .env.desktop.example, docs/local-windows.md).
+#
+# Why: with HOST_IP=localhost the Keycloak issuer is http://localhost:8080/realms/csir. The browser reaches that
+# directly, but inside the coder/portal containers "localhost" is the container itself. A socat relay bound to the
+# container's own 127.0.0.1:<published port> forwards to the in-network service, so the SAME issuer URL works from
+# the browser and from Coder/portal (no issuer mismatch). Workspaces reach Coder via host.docker.internal (templates).
+services:
+  coder:
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - >-
+        socat TCP-LISTEN:${KEYCLOAK_PORT},bind=127.0.0.1,fork,reuseaddr TCP:keycloak:8080 &
+        exec /opt/coder server
+
+  portal:
+    command:
+      - sh
+      - -c
+      - >-
+        for m in ${KEYCLOAK_PORT}:keycloak:8080 ${CODER_PORT}:coder:3000 ${GRAFANA_PORT}:grafana:3000
+        ${PROMETHEUS_PORT}:prometheus:9090 ${GUACAMOLE_PORT}:guacamole:8080; do
+        p=$${m%%:*}; t=$${m#*:}; socat TCP-LISTEN:$$p,bind=127.0.0.1,fork,reuseaddr TCP:$$t & done;
+        exec uvicorn app.main:app --host 0.0.0.0 --port 8088 --proxy-headers
+
+  # Docker Desktop's VM has no rslave-able host root; plain read-only bind is enough for node metrics.
+  node-exporter:
+    volumes: !override ["/:/host:ro"]
