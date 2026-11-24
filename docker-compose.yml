@@ -26,7 +26,8 @@ services:
 
   coder:
     <<: *restart
-    image: ghcr.io/coder/coder:${CODER_VERSION}
+    build: {context: stack/coder, args: {CODER_VERSION: "${CODER_VERSION}"}}
+    image: csir-devhub/coder:${CODER_VERSION}   # upstream ghcr.io/coder/coder + mkisofs (libvirt cloud-init seeds)
     depends_on:
       postgres: {condition: service_healthy}
     ports: ["${CODER_PORT}:3000"]
@@ -163,6 +164,7 @@ services:
       GUACD_CONTAINER: csir-devhub-guacd-1
       GRAFANA_PUBLIC_URL: http://${HOST_IP}:${GRAFANA_PORT}
       KEYCLOAK_PUBLIC_URL: http://${HOST_IP}:${KEYCLOAK_PORT}
+      LIBVIRT_CONTAINER: csir-devhub-libvirt-1
     volumes:
       - /var/run/docker.sock:/var/run/docker.sock
       - portal-data:/data

@@ -1,0 +1,21 @@
+# Overlay: libvirt/QEMU for VM workspaces (ubuntu-vm, windows-kvm). scripts/dc.sh includes it when KVM_ENABLED=true in .env.
+# libvirtd listens on TCP 16509 WITHOUT auth, so it is NOT published: only Coder (terraform-provider-libvirt) and the
+# portal reach it over the private csir-devhub-core network. Production: qemu+ssh:// or qemu+tls:// to dedicated KVM hosts.
+services:
+  libvirt:
+    build: stack/libvirt
+    image: csir-devhub/libvirt:local
+    restart: unless-stopped
+    privileged: true            # bridges/NAT (netlink, iptables) for libvirt networks
+    init: true                  # reap exited qemu processes
+    environment:
+      KVM_ACCEL: ${KVM_ACCEL:-tcg}
+    volumes:
+      - libvirt-data:/var/lib/libvirt
+      - libvirt-qemu-etc:/etc/libvirt/qemu    # persistent domain + network definitions across container re-creates
+    mem_limit: ${LIBVIRT_MEM_LIMIT:-5g}   # guest RAM + QEMU/TCG overhead (~1 GB per TCG guest)
+    networks: [core]
+
+volumes:
+  libvirt-data:
+  libvirt-qemu-etc:

@@ -1,0 +1,8 @@
+<!-- RANGE / isolated profile: no <forward> => guests reach only the host bridge (no egress). -->
+<network>
+  <name>csir-isolated</name>
+  <bridge name='virbr-iso' stp='on' delay='0'/>
+  <ip address='192.168.131.1' netmask='255.255.255.0'>
+    <dhcp><range start='192.168.131.10' end='192.168.131.200'/></dhcp>
+  </ip>
+</network>

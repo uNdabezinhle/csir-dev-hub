@@ -27,3 +27,8 @@ public.env
 public.env.tmp
 logs-tunnel/
 tools-bin/
+# --- packer build outputs ---
+packer/*/output*/
+packer_cache/
+packer/*/build-*.log
+packer/*/virtio-win.iso

@@ -1,0 +1,10 @@
+<!-- windows-licensed profile: NAT here; on-prem this is a routed network whose firewall only allows KMS/AD/WSUS
+     egress and RDP (3389) from guacd. -->
+<network>
+  <name>csir-windows-licensed</name>
+  <forward mode='nat'/>
+  <bridge name='virbr-win' stp='on' delay='0'/>
+  <ip address='192.168.132.1' netmask='255.255.255.0'>
+    <dhcp><range start='192.168.132.10' end='192.168.132.200'/></dhcp>
+  </ip>
+</network>
