@@ -71,7 +71,24 @@ data "coder_parameter" "network_profile" {
   }
 }
 
+data "coder_parameter" "ide" {
+  name         = "ide"
+  display_name = "IDE access"
+  description  = "browser = VS Code in the browser only (locked-down/kiosk); full = also VS Code Desktop via the Coder Remote extension, SSH and port-forward helpers"
+  default      = "full"
+  mutable      = true
+  option {
+    name  = "Browser + VS Code Desktop (Remote)"
+    value = "full"
+  }
+  option {
+    name  = "Browser only"
+    value = "browser"
+  }
+}
+
 locals {
+  ide_full   = data.coder_parameter.ide.value == "full"
   username   = data.coder_workspace_owner.me.name
   ws_slug    = lower("${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}")
   isolated   = data.coder_parameter.network_profile.value == "isolated"
@@ -86,6 +103,16 @@ resource "coder_agent" "main" {
   arch = data.coder_provisioner.me.arch
   os   = "linux"
   dir  = "/home/coder"
+
+  # Built-in apps shown on the workspace page. vscode = "VS Code Desktop" button
+  # (installs/uses the coder.coder-remote extension and opens a Remote-SSH session).
+  display_apps {
+    vscode                 = local.ide_full
+    vscode_insiders        = false
+    web_terminal           = true
+    ssh_helper             = local.ide_full
+    port_forwarding_helper = local.ide_full
+  }
   env = {
     CSIR_DEVHUB_PROFILE = data.coder_parameter.network_profile.value
     GIT_AUTHOR_NAME     = coalesce(data.coder_workspace_owner.me.full_name, local.username)
