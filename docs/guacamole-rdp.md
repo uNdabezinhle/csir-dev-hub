@@ -77,3 +77,14 @@ POST /guacamole/api/session/data/postgresql/connections       {"name":..,"protoc
 POST /guacamole/api/session/data/postgresql/users/{u}/permissions   (grant READ)
 ```
 The JSON-auth approach is preferred: it creates no standing credentials and expires in 5 minutes.
+
+## VM workspaces (libvirt)
+VMs live on libvirt networks inside the libvirt host (the `csir-devhub-libvirt-1` container on the PoC). guacd cannot
+join those networks, so the portal's `KvmProvider.rdp_forward()` sets up the path instead:
+- It adds an iptables DNAT `<libvirt-host>:<20000+hash> -> <vm-ip>:3389` on the libvirt host, accepted **only** from
+  guacd's address, plus a matching FORWARD rule.
+- It hands Guacamole that host and port, together with the workspace's RDP credential (`rdp_password`, a sensitive
+  Coder metadata item generated per workspace by the template).
+
+Port 3389 is still not published anywhere. Proof: `python3 scripts/test-rdp.py demo-vm`. Windows VMs (`windows-kvm`)
+use the same path with `security=nla`.

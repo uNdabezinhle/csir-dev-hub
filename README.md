@@ -27,8 +27,11 @@ flowchart LR
   C -->|terraform docker provider| W1[ubuntu-server<br/>code-server]
   C --> W2[ubuntu-desktop<br/>XFCE + xrdp + noVNC]
   C --> W3[kali<br/>isolated network]
-  C -.->|libvirt, phase 2| W4[windows-kvm VM]
+  C -->|terraform libvirt provider<br/>qemu+tcp, private net| LV[libvirt + QEMU<br/>container]
+  LV --> W5[ubuntu-vm VM]
+  LV -.->|needs a KVM host| W4[windows-kvm VM]
   D -->|RDP 3389, private ws network| W2
+  D -->|DNAT on libvirt host,<br/>guacd source only| W5
   C & K & P --> PG[(PostgreSQL 17)]
   PR[Prometheus] --> C & K & P & NE[node-exporter] & CA[cAdvisor]
   GR[Grafana :3001] --> PR
@@ -37,7 +40,9 @@ flowchart LR
 Each workspace gets its own Docker bridge network (`csir-ws-<owner>-<ws>`):
 - **dev:** egress allowed.
 - **isolated:** `internal` network with no egress. A per-workspace socat gateway relays only to Coder.
-- **windows-licensed:** a libvirt network routed to KMS/AD (phase 2).
+- **windows-licensed:** the libvirt network `csir-windows-licensed` (routed to KMS/AD on-prem). Workspaces on it check out a seat from the licence broker.
+
+VM workspaces use libvirt networks instead: `csir-dev` (NAT), `csir-isolated` (no forward) and `csir-windows-licensed`.
 
 guacd is attached to a workspace network only when its owner opens an RDP session from the portal.
 
@@ -46,12 +51,13 @@ guacd is attached to a workspace network only when its owner opens an RDP sessio
 | Service | Port (host) | Purpose |
 |---|---|---|
 | Coder | 3000 (metrics 2112 internal) | Workspace orchestration, IDE/app proxy, templates |
-| Portal / admin console | 8088 | Self-service and admin: users, workspaces, images, quotas, reclaim, FinOps, audit, health |
+| Portal / admin console | 8088 | Self-service and admin: users, workspaces, images (Trivy scans, approvals), quotas, licences, reclaim, FinOps, billing, KVM, audit, health |
 | Keycloak | 8080 | OIDC IdP, LDAP federation, MFA (realm `csir`) |
 | Guacamole | 8089 (`/guacamole/`) | Brokered RDP (guacd has no published ports) |
 | Grafana | 3001 | Dashboard "CSIR Dev Hub - Platform Overview" |
 | Prometheus | 9090 | Metrics and alert rules |
 | OpenLDAP, Postgres, guacd, node-exporter, cAdvisor | internal only | |
+| libvirt (libvirtd TCP 16509) | internal only (`csir-devhub-core`) | VM workspaces (overlay `docker-compose.kvm.yml`, `KVM_ENABLED=true`) |
 
 ## Repository layout
 
@@ -59,20 +65,27 @@ guacd is attached to a workspace network only when its owner opens an RDP sessio
 docker-compose.yml            core stack (postgres, coder, keycloak, openldap, prometheus, grafana, exporters, portal)
 docker-compose.oidc.yml       Coder OIDC overlay (added by scripts/dc.sh once OIDC_ISSUER_URL is set)
 docker-compose.guacamole.yml  guacd + guacamole overlay (added when GUACAMOLE_ENABLED=true)
+docker-compose.kvm.yml        libvirt/QEMU overlay (added when KVM_ENABLED=true; KVM_ACCEL=tcg|kvm)
 .env.example                  non-secret settings (copy to .env)
 secrets/                      generated secrets: devhub.env (chmod 600, git-ignored)
 identity/roles.json           six roles -> LDAP groups -> Coder roles, demo users
-scripts/                      start/stop, dc.sh wrapper, bootstrap (identity, guacamole), build-images, e2e tests
-stack/                        postgres, prometheus, grafana, guacamole schema, portal (FastAPI app + config)
+scripts/                      start/stop, dc.sh wrapper, bootstrap (identity, guacamole), build-images, e2e tests,
+                              kvm-publish-image, test-kvm, backup, restore
+stack/                        postgres, prometheus, grafana, guacamole schema, libvirt, coder (+mkisofs), portal
+packer/                       golden images: ubuntu-golden (built), windows-2022 (Microsoft eval ISO; needs KVM)
+ops/systemd/                  backup service + timer
 images/                       workspace images: ubuntu-server (24.04/26.04), ubuntu-desktop, kali
-templates/                    Coder Terraform templates: ubuntu-server, ubuntu-desktop, kali, windows-kvm (draft)
-docs/                         auth-mfa, ide-options, guacamole-rdp, annex-mapping, extending-kvm, sizing
-.github/workflows/ci.yml      CI: compose config, terraform fmt/validate, hadolint, portal build
+templates/                    Coder Terraform templates: ubuntu-server, ubuntu-desktop, kali, ubuntu-vm, windows-kvm
+docs/                         auth-mfa, ide-options, guacamole-rdp, annex-mapping, extending-kvm, sizing, backup,
+                              licensing-images-billing
+.github/workflows/ci.yml      CI: compose config, terraform fmt/validate, hadolint, portal/libvirt/coder builds,
+                              Trivy image + config scans (report-only), packer validate
 ```
 
 ## Prerequisites
 - Linux host with Docker Engine and Compose v2, about 16 GB RAM (PoC), Python 3 and curl.
-- `/dev/kvm` for the Windows/KVM path.
+- `/dev/kvm` with working (nested) virtualisation for Windows VMs. Linux VMs also run without it, using QEMU TCG
+  (`KVM_ACCEL=tcg`, the PoC default).
 - The `coder` CLI (matching v2.38) for pushing templates, and Terraform 1.14 for local validation.
 - On this PoC box the Docker daemon is at `DOCKER_HOST=tcp://127.0.0.1:2375`, and the scripts default to it.
   Elsewhere, export `DOCKER_HOST=unix:///var/run/docker.sock`.
@@ -126,9 +139,18 @@ includes the Coder admin, Keycloak admin, Grafana admin, guacadmin and the share
 9. **Observability:** open Grafana at `http://HOST:3001` (dashboard *CSIR Dev Hub - Platform Overview*) and
    Prometheus targets at `http://HOST:9090/targets`.
 10. **Audit:** open `http://HOST:8088/admin/audit`. It can filter by actor or action and export CSV.
+11. **VM workspace (libvirt):** `admin/demo-vm` (template `ubuntu-vm`). Run `coder ssh admin/demo-vm`, or open it from the
+    portal (terminal, VS Code, code-server, **Desktop (RDP)** through Guacamole). Admin → **KVM** shows capacity,
+    domains, power actions and snapshots. Proofs: `scripts/test-kvm.sh` and `python3 scripts/test-rdp.py demo-vm`.
+12. **Licences:** Admin → **Licences** shows seat pools, who holds which seat, resize, and manual checkout/return. A
+    `windows-licensed` workspace checks out a seat on create and returns it on delete. Role and project caps apply.
+13. **Images:** Admin → **Images** → Scan runs Trivy on an image. The image-publisher role approves it. Publishing a catalog
+    item is blocked while criticals exceed `max_critical`, unless a hub-admin records a time-limited risk acceptance.
+14. **Billing:** Admin → **Billing**, or `GET /api/billing/usage?from=2026-11-01&to=2026-11-30&group_by=user&format=csv`.
+15. **Backup:** `scripts/backup.sh`, then `scripts/restore.sh latest --verify` (see docs/backup.md).
 
-End-to-end portal test: `python3 scripts/test-portal.py` covers 25 checks (auth, RBAC, provisioning, quotas, network
-policy, IDE health, secrets, audit).
+End-to-end portal test: `python3 scripts/test-portal.py` covers 49 checks (auth, RBAC, provisioning, quotas, network
+policy, IDE health, secrets, audit, licence broker, image scanning and approval, billing, KVM, backup status).
 
 ## Verified vs stubbed (summary)
 - **Verified:**
@@ -137,10 +159,21 @@ policy, IDE health, secrets, audit).
   - Keycloak OIDC, OpenLDAP federation and forced TOTP MFA
   - the six roles, the portal (quotas, reclaim, FinOps, secrets, audit, admin console) and the isolated network profile
   - Guacamole RDP with session recording, and Prometheus/Grafana
+  - **VM workspaces on libvirt/QEMU:**
+    - the `ubuntu-vm` template; `demo-vm` with the agent, ssh, code-server and brokered RDP
+    - the Packer Ubuntu golden image
+    - the portal KVM admin page
+    - runs under TCG, because nested KVM is broken on this box
+  - **licence broker:** seat pools, checkout and return tied to the workspace lifecycle, reconcile, caps, audit, admin page
+  - **image scanning:** Trivy in CI (report-only) and in the portal; publisher approval; publishing blocked on criticals
+  - **billing export:** CSV/JSON per user, project or workspace, from Coder and Prometheus
+  - **backup and restore:** test restore verified
   - CI is green
-- **Stubbed:**
-  - Windows on KVM: the template validates but isn't pushed
-  - licence broker, image scanning and approval, billing export, backup (`stack/portal/app/extensions/base.py`)
+- **Partial:** Windows on KVM.
+  - The `windows-kvm` template is pushed to Coder.
+  - The `packer/windows-2022` pipeline (Microsoft evaluation ISO) validates.
+  - Neither is built: the PoC box's nested KVM crashes the host kernel, so a KVM host is needed (docs/extending-kvm.md).
+- **Stubbed:** the KMS host (`kms.csir.local`) and off-host backup replication.
 - **Planned:** HA and TLS with wildcard apps, AD, WebAuthn, Loki, recording retention.
 
 See [docs/annex-mapping.md](docs/annex-mapping.md).
@@ -151,6 +184,8 @@ See [docs/annex-mapping.md](docs/annex-mapping.md).
 - [docs/guacamole-rdp.md](docs/guacamole-rdp.md): brokered RDP
 - [docs/extending-kvm.md](docs/extending-kvm.md): full Coder + KVM on-prem, Windows
 - [docs/sizing.md](docs/sizing.md): tiers 30/40/60/70 and per-workspace limits
+- [docs/backup.md](docs/backup.md): backup, retention, restore verification, timer
+- [docs/licensing-images-billing.md](docs/licensing-images-billing.md): licence broker, image scanning and approval, billing export
 
 ## Pushing to GitHub
 
