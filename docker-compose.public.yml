@@ -1,0 +1,28 @@
+# Overlay: public HTTPS access through Cloudflare tunnels (see docs/public-access.md).
+# scripts/dc.sh adds this file (and --env-file public.env) automatically when public.env exists;
+# public.env is written by scripts/tunnel.sh up and removed by scripts/tunnel.sh down (local mode).
+# OIDC_ISSUER_URL is also overridden in public.env so Coder + portal use the public Keycloak issuer.
+services:
+  coder:
+    environment:
+      CODER_ACCESS_URL: ${PUBLIC_CODER_URL:?run scripts/tunnel.sh up}
+      # Explicit (not only via public.env) so an exported OIDC_ISSUER_URL in the caller's shell cannot win.
+      # Assumes OIDC is configured (docker-compose.oidc.yml); browser and Coder must agree on this issuer.
+      CODER_OIDC_ISSUER_URL: ${PUBLIC_KEYCLOAK_URL}/realms/csir
+      # No wildcard access URL: quick tunnels have no *.host wildcard, so apps must be path-based (subdomain=false).
+  keycloak:
+    environment:
+      KC_HOSTNAME: ${PUBLIC_KEYCLOAK_URL}
+      KC_HOSTNAME_BACKCHANNEL_DYNAMIC: "true"   # admin/bootstrap scripts may still call http://HOST_IP:8080
+      KC_PROXY_HEADERS: xforwarded
+  portal:
+    environment:
+      OIDC_ISSUER_URL: ${PUBLIC_KEYCLOAK_URL}/realms/csir
+      CODER_PUBLIC_URL: ${PUBLIC_CODER_URL}
+      PORTAL_PUBLIC_URL: ${PUBLIC_PORTAL_URL}
+      KEYCLOAK_PUBLIC_URL: ${PUBLIC_KEYCLOAK_URL}
+      GRAFANA_PUBLIC_URL: ${PUBLIC_GRAFANA_URL}
+      GUAC_PUBLIC_URL: ${PUBLIC_GUACAMOLE_URL}/guacamole
+  grafana:
+    environment:
+      GF_SERVER_ROOT_URL: ${PUBLIC_GRAFANA_URL}

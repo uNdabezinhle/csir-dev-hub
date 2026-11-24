@@ -98,8 +98,11 @@ def setup_keycloak():
                               ("devhub-portal", S["PORTAL_OIDC_SECRET"], E["ADMIN_CONSOLE_PORT"])):
         base = f"http://{HOST}:{port}"
         redirects = [f"{base}/api/v2/users/oidc/callback"] if cid == "coder" else [f"{base}/*", f"http://localhost:{port}/*"]
+        pub = envfile(f"{ROOT}/public.env").get("PUBLIC_CODER_URL" if cid == "coder" else "PUBLIC_PORTAL_URL") \
+            if os.path.exists(f"{ROOT}/public.env") else None  # keep tunnel URIs (scripts/tunnel.sh) on re-run
+        if pub: redirects.append(f"{pub}/api/v2/users/oidc/callback" if cid == "coder" else f"{pub}/*")
         existing = kc("GET", f"/admin/realms/{REALM}/clients?clientId={cid}")
-        d = client_def(cid, secret, redirects, [base])
+        d = client_def(cid, secret, redirects, [base] + ([pub] if pub else []))
         if existing:
             cuuid = existing[0]["id"]; d.pop("protocolMappers")
             kc("PUT", f"/admin/realms/{REALM}/clients/{cuuid}", {**existing[0], **d})

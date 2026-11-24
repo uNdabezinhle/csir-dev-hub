@@ -22,3 +22,8 @@ __pycache__/
 *.tfplan
 crash.log
 .terraform.lock.hcl
+# --- public tunnel runtime (scripts/tunnel.sh) ---
+public.env
+public.env.tmp
+logs-tunnel/
+tools-bin/
