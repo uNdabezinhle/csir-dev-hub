@@ -194,6 +194,8 @@ if scan:
     check("G5 publisher approval blocked while critical CVEs > threshold 0" if crit else "G5 publisher approves a clean image",
           any(("critical CVE" in f) if crit else ("approved" in f) for f in flashes(b)), flashes(b))
     # publish gate: hide the catalog item, try to re-publish (blocked), hub-admin risk acceptance, re-publish (ok)
+    if crit:  # idempotent re-runs: withdraw a risk acceptance left by an earlier run so the gate starts closed
+        post(adm, f"{P}/admin/images/decide", {"image": IMG, "decision": "rejected", "note": "e2e: reset before gate test"})
     post(adm, f"{P}/admin/images/ubuntu-server", {"published": 0, "default_cpu": 2, "default_mem": 2, "description": ""})
     st, b, _ = post(pub, f"{P}/admin/images/ubuntu-server", {"published": 1, "default_cpu": 2, "default_mem": 2, "description": ""})
     blocked = any("Cannot publish" in f for f in flashes(b)) if crit else True
