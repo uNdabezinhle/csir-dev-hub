@@ -1,0 +1,11 @@
+# Overlay: "lite" public mode used by scripts/tunnel-pinggy.sh (account-free Pinggy tunnels, URLs rotate hourly).
+# Only the portal's browser-facing links change. Coder (CODER_ACCESS_URL, OIDC issuer) and Keycloak (KC_HOSTNAME)
+# are NOT touched, so a tunnel URL rotation can never cause an OIDC issuer mismatch or strand workspace agents.
+# Consequence: SSO (Keycloak) is local-only; over the public URLs use the portal local login and Coder password login.
+services:
+  portal:
+    environment:
+      PORTAL_PUBLIC_URL: ${PUBLIC_PORTAL_URL:?run scripts/tunnel-pinggy.sh up}
+      CODER_PUBLIC_URL: ${PUBLIC_CODER_URL}
+      GRAFANA_PUBLIC_URL: ${PUBLIC_GRAFANA_URL}
+      GUAC_PUBLIC_URL: ${PUBLIC_GUACAMOLE_URL}/guacamole

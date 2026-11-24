@@ -73,6 +73,39 @@ new Coder users come only via SSO (Keycloak, MFA enforced) or the portal; Keyclo
   Keycloak URL (outbound HTTPS through Cloudflare). Scripts that drive login against `http://HOST_IP:*`
   (`scripts/test-*.py`) will be redirected to the public URLs while public mode is on.
 
+## What actually works on the PoC box: Pinggy "lite" mode (account-free, TLS on 443)
+
+The PoC box's egress only passes TLS/HTTP on 443 (a Pingora proxy), so Cloudflare (port 7844) fails and plain
+SSH tunnels (localhost.run / Pinggy / serveo on 22 or raw 443) get `kex_exchange_identification: banner line 0:
+HTTP/1.1 400 Bad Request` / `Server: Pingora`; localhost.run over TLS gets `tlsv1 alert access denied`.
+Pinggy's documented *SSH-over-SSL* mode (ssh with `ProxyCommand=openssl s_client -connect a.pinggy.io:443`) works.
+
+```bash
+./scripts/tunnel-pinggy.sh up       # background supervisor + 4 tunnels; prints the URLs (~15 s)
+./scripts/tunnel-pinggy.sh status   # current URLs (also in public.env: PUBLIC_*_URL)
+./scripts/tunnel-pinggy.sh down     # stop + portal back to local URLs
+```
+
+| Public | Service | Login over the public URL |
+|---|---|---|
+| `PUBLIC_PORTAL_URL` | CSIR Dev Hub portal (admin console, provisioning, RDP broker) | `admin` / `CODER_ADMIN_PASSWORD` (local login) |
+| `PUBLIC_CODER_URL` | Coder dashboard + browser VS Code (path apps, WebSockets OK) | `admin@csir.local` / `CODER_ADMIN_PASSWORD` (password login) |
+| `PUBLIC_GRAFANA_URL` | Grafana | `admin` / `GRAFANA_ADMIN_PASSWORD` |
+| `PUBLIC_GUACAMOLE_URL` | Guacamole (target of the portal's "Open desktop" token redirect) | portal-minted token; `guacadmin` / `GUACADMIN_PASSWORD` |
+
+* **Lifetime:** free Pinggy tunnels expire after **60 minutes** and come back with a **new random hostname**.
+  The supervisor (`logs-tunnel/pinggy-supervisor.log`) reconnects, re-checks every URL from outside, and only then
+  rewrites `public.env` and recreates the portal (`docker-compose.public-lite.yml`) so its links follow. Share the
+  new portal URL after each rotation (`tunnel-pinggy.sh status`). A box restart stops the tunnels; run `up` again.
+* **Browser interstitial:** the first visit to each free hostname shows a Pinggy "Caution… served for free" page;
+  click through once per hostname (portal, Coder, Guacamole, Grafana).
+* **Lite = Coder and Keycloak configs untouched.** `CODER_ACCESS_URL`, the OIDC issuer and `KC_HOSTNAME` stay on
+  `HOST_IP`, so hourly URL changes can't cause the issuer mismatch that crash-loops Coder, and workspace agents keep
+  their internal URL. Consequence: **SSO/MFA via Keycloak is local-only** (the "Sign in with CSIR SSO" buttons point
+  at the private Keycloak); use local/password logins publicly. Coder may show an "access URL" warning banner — harmless.
+* For stable hostnames + SSO from outside use the full mode (`tunnel.sh`, named Cloudflare tunnel) from a host whose
+  egress allows port 7844, or a paid Pinggy/ngrok reserved domain written into `public.env` with full mode.
+
 ## Stable URLs: named tunnel (recommended beyond demos / on-prem)
 Needs a Cloudflare account + a zone (e.g. `devhub.example.org`), same port-7844 egress.
 ```bash

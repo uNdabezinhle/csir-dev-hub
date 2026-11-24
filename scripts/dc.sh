@@ -7,5 +7,9 @@ if grep -qE '^OIDC_ISSUER_URL=.+' secrets/devhub.env 2>/dev/null; then FILES+=(-
 if grep -qE '^GUACAMOLE_ENABLED=true' .env 2>/dev/null; then FILES+=(-f docker-compose.guacamole.yml); fi
 ENVS=(--env-file .env --env-file secrets/devhub.env)
 # Public mode (scripts/tunnel.sh up): public.env overrides URLs + OIDC issuer, docker-compose.public.yml applies them.
-if [ -f public.env ]; then ENVS+=(--env-file public.env); FILES+=(-f docker-compose.public.yml); fi
+# "Lite" public mode (scripts/tunnel-pinggy.sh): only portal links change; Coder + Keycloak stay on local URLs.
+if [ -f public.env ]; then
+  ENVS+=(--env-file public.env)
+  if grep -qE '^PUBLIC_MODE=lite' public.env; then FILES+=(-f docker-compose.public-lite.yml); else FILES+=(-f docker-compose.public.yml); fi
+fi
 exec docker compose "${ENVS[@]}" "${FILES[@]}" "$@"
