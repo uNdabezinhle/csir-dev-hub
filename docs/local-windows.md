@@ -54,8 +54,8 @@ All keys are in `secrets\devhub.env` (never committed).
 - **Docker socket.** Docker Desktop exposes `/var/run/docker.sock` as `root:root 0660`, hence `DOCKER_GID=0`.
 - **node-exporter** binds `/` read-only without `rslave` (not supported in the Docker Desktop VM); metrics are
   of the Docker Desktop VM, not of Windows.
-- `scripts/devhub.ps1` sets `DOCKER_HOST` from the active Docker context, `PYTHON`, UTF-8 Python I/O and disables MSYS
-  path conversion before calling the bash/python scripts.
+- `scripts/devhub.ps1` sets `DOCKER_HOST` from the active Docker context, `PYTHON`, UTF-8 Python I/O and excludes container paths
+  (`/var`, `/tmp`, ...) from MSYS path conversion before calling the bash/python scripts.
 
 ## Limits vs the server deployment
 - No KVM/libvirt (VM and Windows templates), no public tunnel, no systemd backup timers (run `scripts/backup.sh` by hand

@@ -4,7 +4,7 @@ CSIR Dev Hub on Docker Desktop (Windows 11): run any repo script with the right 
   .\scripts\devhub.ps1 stop                  # stop the stack (volumes kept)
   .\scripts\devhub.ps1 scripts/dc.sh ps      # any bash script (Git Bash) ...
   .\scripts\devhub.ps1 scripts/test-mfa.py   # ... or python script
-Sets DOCKER_HOST to the Docker Desktop engine, PYTHON for the bash scripts, UTF-8 Python I/O, no MSYS path mangling.
+Sets DOCKER_HOST to the Docker Desktop engine, PYTHON for the bash scripts, UTF-8 Python I/O, no MSYS rewriting of container paths.
 Never prints secrets.
 #>
 $ErrorActionPreference = 'Stop'
@@ -24,7 +24,8 @@ if (-not $env:DOCKER_HOST) {
 }
 $env:PYTHON = ($Py.Source -replace '\\', '/')
 $env:PYTHONUTF8 = '1'; $env:PYTHONIOENCODING = 'utf-8'
-$env:MSYS_NO_PATHCONV = '1'; $env:MSYS2_ARG_CONV_EXCL = '*'
+# Keep MSYS path conversion for /dev/null etc. (native curl/openssl need it) but never rewrite container paths
+$env:MSYS2_ARG_CONV_EXCL = '/var;/tmp;/opt;/etc;/home;/run;/srv;/usr;/bin;/proc;/sys;/data;/host;//'
 
 function Lock-Secrets {
   $f = Join-Path $Root 'secrets\devhub.env'
