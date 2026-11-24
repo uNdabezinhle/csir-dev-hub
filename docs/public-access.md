@@ -118,6 +118,24 @@ Pinggy's documented *SSH-over-SSL* mode (ssh with `ProxyCommand=openssl s_client
 * For stable hostnames + SSO from outside use the full mode (`tunnel.sh`, named Cloudflare tunnel) from a host whose
   egress allows port 7844, or a paid Pinggy/ngrok reserved domain written into `public.env` with full mode.
 
+### Pinggy account (token) — dashboard visibility
+Put the user's Pinggy access token in `secrets/devhub.env` as `PINGGY_TOKEN=` (never on the command line / in git) and
+run `./scripts/tunnel-pinggy.sh up`. The script writes a chmod-600 `secrets/pinggy-ssh.conf` (`User <token>[+force]`) and
+answers Pinggy's password prompt with an empty password (`scripts/pinggy-askpass.sh`), keeping the TLS-on-443 ProxyCommand.
+
+Verified on the PoC (2026-11-24): the token is accepted (`You are authenticated as <account e-mail>`), the account is
+**Free** (`Your tunnel will expire in 60 minutes`), and a Free token allows **one active tunnel at a time**
+(a second login gets `Login is not allowed: A tunnel with the same token (…) is already active. Close the existing
+tunnel, or use the force option.`). Therefore:
+* `PINGGY_ACCOUNT_SERVICES` (default `portal`) — only the portal tunnel runs under the account and shows at
+  dashboard.pinggy.io; Coder, Grafana and Guacamole stay anonymous (4 tunnels in total, all health-checked).
+* With one account service the login uses `<token>+force`, so a reconnect always replaces a stale session.
+  Side effect: it also closes any other tunnel the user starts with the same token elsewhere.
+* Free URLs still rotate hourly (and on every reconnect); `/public-urls` and `tunnel-pinggy.sh status` show the
+  account per tunnel (`free:<email>` / `anonymous`).
+* **Pro**: set `PINGGY_ACCOUNT_SERVICES="portal coder grafana guacamole"` (no `+force`) and use persistent
+  subdomains; with stable hostnames the full public mode (Keycloak SSO/MFA over the public URLs) becomes possible.
+
 ## Stable URLs: named tunnel (recommended beyond demos / on-prem)
 Needs a Cloudflare account + a zone (e.g. `devhub.example.org`), same port-7844 egress.
 ```bash

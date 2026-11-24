@@ -10,25 +10,56 @@
 # Free Pinggy tunnels EXPIRE AFTER 60 MINUTES and get a NEW random hostname on reconnect. The supervisor reconnects,
 # re-verifies every URL from outside, rewrites public.env and recreates the portal so its links follow.
 # Lite mode: Coder/Keycloak configs are never changed (see docker-compose.public-lite.yml). Never prints secrets.
+# Pinggy account: if PINGGY_TOKEN is set in secrets/devhub.env, the services in PINGGY_ACCOUNT_SERVICES (default: portal)
+# connect as that account (visible at dashboard.pinggy.io); the rest stay anonymous. A FREE account allows ONE active
+# tunnel per token, so on free only the portal is account-bound, and it logs in as TOKEN+force so a stale session can
+# never lock out a reconnect (note: this also closes any other tunnel the user runs with the same token).
+# Pro: set PINGGY_ACCOUNT_SERVICES="portal coder grafana guacamole" (multiple tunnels/token; +force is then not used).
+# The token is passed via a chmod-600 ssh config in secrets/ and an empty-password askpass; never on the command line.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 export DOCKER_HOST="${DOCKER_HOST:-tcp://127.0.0.1:2375}"
 set -a; . ./.env; set +a
 LOG=logs-tunnel; mkdir -p "$LOG"
+PINGGY_TOKEN=$(grep -E '^PINGGY_TOKEN=' secrets/devhub.env 2>/dev/null | cut -d= -f2- || true)
+ACCOUNT_SERVICES=${PINGGY_ACCOUNT_SERVICES:-portal}
+SSH_CONF=secrets/pinggy-ssh.conf
+if [ -n "$PINGGY_TOKEN" ]; then
+  force=""; [ "$(echo $ACCOUNT_SERVICES | wc -w)" = 1 ] && force="+force"
+  ( umask 077; printf 'Host a.pinggy.io\n  User %s%s\n' "$PINGGY_TOKEN" "$force" > "$SSH_CONF" )
+fi
+unset PINGGY_TOKEN
+is_account() { [ -f "$SSH_CONF" ] && [[ " $ACCOUNT_SERVICES " == *" $1 "* ]]; }
 SERVICES=("portal:${ADMIN_CONSOLE_PORT:-8088}:/login" "coder:${CODER_PORT:-3000}:/healthz"
           "grafana:${GRAFANA_PORT:-3001}:/api/health" "guacamole:${GUACAMOLE_PORT:-8089}:/guacamole/")
 SSH_OPTS=(-T -p 443 -o StrictHostKeyChecking=accept-new -o ServerAliveInterval=30 -o ServerAliveCountMax=3
           -o ExitOnForwardFailure=yes -o "ProxyCommand=openssl s_client -quiet -connect a.pinggy.io:443 -servername a.pinggy.io 2>/dev/null")
 
 alive() { [ -f "$LOG/pinggy-$1.pid" ] && kill -0 "$(cat "$LOG/pinggy-$1.pid")" 2>/dev/null; }
-url_of() { grep -oE 'https://[a-z0-9-]+\.free\.pinggy\.net' "$LOG/pinggy-$1.log" 2>/dev/null | tail -1 || true; }
+url_of() { grep -oE 'https://[a-z0-9.-]+\.(free\.pinggy\.net|pinggy\.link|pinggy\.online)' "$LOG/pinggy-$1.log" 2>/dev/null | tail -1 || true; }
+account_of() {  # name -> "anonymous" | "free:<email>" | "pro:<email>" (from the tunnel's own banner)
+  local f="$LOG/pinggy-$1.log" who
+  who=$(grep -oE 'authenticated as [^ ]+' "$f" 2>/dev/null | tail -1 | cut -d' ' -f3 || true)
+  [ -n "$who" ] || { echo anonymous; return; }
+  grep -q 'expire in 60 minutes' "$f" 2>/dev/null && echo "free:$who" || echo "pro:$who"
+}
 
 start_one() {  # name port
   local n=$1 p=$2 u=""
   for attempt in 1 2 3; do
-    setsid nohup ssh "${SSH_OPTS[@]}" -R "0:localhost:$p" a.pinggy.io >"$LOG/pinggy-$n.log" 2>&1 </dev/null &
+    if is_account "$n"; then
+      SSH_ASKPASS="$PWD/scripts/pinggy-askpass.sh" SSH_ASKPASS_REQUIRE=force DISPLAY=:0 \
+        setsid nohup ssh -F "$SSH_CONF" "${SSH_OPTS[@]}" -R "0:localhost:$p" a.pinggy.io >"$LOG/pinggy-$n.log" 2>&1 </dev/null &
+    else
+      setsid nohup ssh "${SSH_OPTS[@]}" -R "0:localhost:$p" a.pinggy.io >"$LOG/pinggy-$n.log" 2>&1 </dev/null &
+    fi
     echo $! > "$LOG/pinggy-$n.pid"
     for _ in $(seq 1 30); do u=$(url_of "$n"); [ -n "$u" ] && return 0; alive "$n" || break; sleep 1; done
+    # Pinggy echoes the token in some rejection banners -> redact the (now closed) log before anything reads it.
+    if is_account "$n" && ! alive "$n"; then sed -i -E 's/token \([^)]*\)/token ([token])/g' "$LOG/pinggy-$n.log"; fi
+    if is_account "$n" && grep -qiE 'not allowed|invalid|Permission denied|authentication' "$LOG/pinggy-$n.log"; then
+      log "$n: Pinggy rejected the account login: $(grep -m1 -iE 'not allowed|invalid|denied|token' "$LOG/pinggy-$n.log" | sed 's/([^)]*)/([token])/')"
+    fi
     kill "$(cat "$LOG/pinggy-$n.pid")" 2>/dev/null || true; sleep $((attempt * 5))
   done
   echo "$(date '+%F %T') pinggy $n: no URL; last log lines:"; tail -3 "$LOG/pinggy-$n.log"; return 1
@@ -60,13 +91,14 @@ write_status() {  # logs-tunnel/public-urls.json (+ a copy in the portal for GET
   local rows="" s n p path u r
   for s in "${SERVICES[@]}"; do IFS=: read -r n p path <<<"$s"; u=$(url_of "$n")
     if alive "$n"; then r=$(health "$u" "$path") || true; else r="fail ssh-exited"; fi
-    rows+="$n|$u|$r"$'\n'; done
+    rows+="$n|$u|$r $(account_of "$n")"$'\n'; done
   printf '%s' "$rows" | python3 -c '
 import json, sys, datetime
 svc = {}
 for line in sys.stdin.read().splitlines():
     n, u, r = line.split("|", 2); f = r.split()
-    svc[n] = {"url": u, "healthy": f[0] == "ok", "public_ip": f[1] if f[0] == "ok" else None,
+    acct = f.pop()
+    svc[n] = {"url": u, "healthy": f[0] == "ok", "public_ip": f[1] if f[0] == "ok" else None, "pinggy_account": acct,
               "http": f[2] if f[0] == "ok" else None, "error": None if f[0] == "ok" else " ".join(f[1:])}
 print(json.dumps({"provider": "pinggy", "mode": "lite", "checked_at": datetime.datetime.now().astimezone().isoformat(timespec="seconds"),
                   "check": "dns.google DoH + HTTP to the public IP", "services": svc}, indent=1))' > "$LOG/public-urls.json.tmp" \
@@ -145,7 +177,7 @@ case "${1:-status}" in
     alive supervisor && echo "  supervisor: running" || echo "  supervisor: stopped"
     for s in "${SERVICES[@]}"; do IFS=: read -r n p path <<<"$s"; u=$(url_of "$n")
       if ! alive "$n"; then echo "  $n: DOWN (ssh not running) ${u}"; continue; fi
-      if r=$(health "$u" "$path"); then echo "  $n: $u  LIVE (public DNS ${r#ok }; HTTP via public IP)"; else echo "  $n: $u  DEAD ($r)"; fi
+      if r=$(health "$u" "$path"); then echo "  $n: $u  LIVE (public DNS ${r#ok }; HTTP via public IP) [$(account_of "$n")]"; else echo "  $n: $u  DEAD ($r) [$(account_of "$n")]"; fi
     done
     [ -f public.env ] && grep -E '^PUBLIC_(MODE|SINCE)' public.env | sed 's/^/  /' || echo "  (no public.env: local mode)"
     [ -f "$LOG/public-urls.json" ] && echo "  last supervisor check: $(python3 -c 'import json;print(json.load(open("'"$LOG"'/public-urls.json"))["checked_at"])')" || true ;;
