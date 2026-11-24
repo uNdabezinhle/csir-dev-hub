@@ -50,6 +50,11 @@ def need(request, perm=None):
     if perm and not rbac.can(u, perm): raise HTTPException(403, f"requires permission '{perm}'")
     return u
 
+# Phase 2 routes (licences, image scans, billing, KVM) are registered BEFORE the generic /admin/images/{template}
+# route below, otherwise "/admin/images/scan" would be captured as template="scan".
+from . import phase2  # noqa: E402
+phase2.register(app, need, render, flash, ip)
+
 # ------------------------------------------------------------------ startup
 @app.on_event("startup")
 def startup():
@@ -588,8 +593,6 @@ def api_workspaces(request: Request):
     ws = coder.workspaces() if rbac.can(u, "workspace.view_all") else coder.workspaces(owner=u["username"])
     return [enrich(w, led) for w in ws]
 
-from . import phase2  # noqa: E402  (licences, image scans, billing, KVM routes)
-phase2.register(app, need, render, flash, ip)
 
 @app.get("/metrics")
 def metrics(): return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)

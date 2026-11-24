@@ -54,13 +54,23 @@ class ImageScanner:
         p = policy()
         try:
             cli = self._docker()
-            out = cli.containers.run(p.get("trivy_image", "aquasec/trivy:0.76.2"),
-                ["image", "--quiet", "--scanners", "vuln", "--format", "json", "--timeout", "20m", image],
+            # Write the report to a file inside the container and copy it out: large JSON on stdout gets split by the
+            # Docker log driver (16 KB partial-line chunks) and arrives corrupted.
+            ctr = cli.containers.run(p.get("trivy_image", "aquasec/trivy:0.76.2"),
+                ["image", "--quiet", "--scanners", "vuln", "--format", "json", "--output", "/tmp/report.json", "--timeout", "20m", image],
                 volumes={"/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "ro"},
                          p.get("cache_volume", "csir-devhub_trivy-cache"): {"bind": "/root/.cache/trivy", "mode": "rw"}},
-                remove=True, stdout=True, stderr=False, mem_limit=p.get("mem_limit", "1g"),
-                labels={"org.csir.devhub.role": "image-scan"})
-            rep = json.loads(out)
+                detach=True, mem_limit=p.get("mem_limit", "1g"), labels={"org.csir.devhub.role": "image-scan"})
+            try:
+                rc = ctr.wait(timeout=1500).get("StatusCode", 1)
+                if rc != 0: raise RuntimeError(f"trivy exited {rc}: {ctr.logs(stdout=False, stderr=True).decode(errors='replace')[-300:]}")
+                import io, tarfile
+                stream, _ = ctr.get_archive("/tmp/report.json")
+                tf = tarfile.open(fileobj=io.BytesIO(b"".join(stream)))
+                rep = json.load(tf.extractfile(tf.getmembers()[0]))
+            finally:
+                try: ctr.remove(force=True)
+                except Exception: pass
             self._store(sid, rep)
             r = self.scan(sid=sid)
             audit.log("scanner", "image.scan.result", image, {"scan": sid, **{k: r[k] for k in ("critical", "high", "medium", "low")}})
