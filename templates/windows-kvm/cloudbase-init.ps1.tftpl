@@ -1,9 +1,26 @@
 #ps1_sysnative
-# cloudbase-init user-data for CSIR Dev Hub Windows workspaces: starts the Coder agent.
-$env:CODER_AGENT_TOKEN = "${token}"
+# cloudbase-init user-data for CSIR Dev Hub Windows workspaces (re-runs on every build: new instance-id/token).
+$ErrorActionPreference = "Stop"
+# 1. Local RDP account (password generated per workspace by Terraform; the portal passes it to Guacamole)
+$pw = ConvertTo-SecureString '${rdp_password}' -AsPlainText -Force
+if (Get-LocalUser -Name '${rdp_user}' -ErrorAction SilentlyContinue) { Set-LocalUser -Name '${rdp_user}' -Password $pw }
+else { New-LocalUser -Name '${rdp_user}' -Password $pw -PasswordNeverExpires -AccountNeverExpires | Out-Null }
+Add-LocalGroupMember -Group 'Remote Desktop Users' -Member '${rdp_user}' -ErrorAction SilentlyContinue
+Add-LocalGroupMember -Group 'Administrators' -Member '${rdp_user}' -ErrorAction SilentlyContinue
+# 2. RDP with NLA; inbound 3389 only from the libvirt gateway (the DNAT hop used by guacd), never from the LAN
+Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name fDenyTSConnections -Value 0
+Set-ItemProperty 'HKLM:\System\CurrentControlSet\Control\Terminal Server\WinStations\RDP-Tcp' -Name UserAuthentication -Value 1
+Get-NetFirewallRule -DisplayGroup 'Remote Desktop' | Set-NetFirewallRule -Enabled True -RemoteAddress LocalSubnet
+# 3. Data disk -> D:
+Get-Disk | Where-Object PartitionStyle -eq 'RAW' | Initialize-Disk -PartitionStyle GPT -PassThru |
+  New-Partition -DriveLetter D -UseMaximumSize | Format-Volume -FileSystem NTFS -NewFileSystemLabel Data -Confirm:$false | Out-Null
+# 4. Coder agent (token per build), started as a scheduled task at boot so it survives reboots
 [Environment]::SetEnvironmentVariable("CODER_AGENT_TOKEN", "${token}", "Machine")
-# Enable RDP (NLA on) for brokered access; firewall limited to the windows-licensed network.
-Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
-Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
-# Coder agent bootstrap (downloads the agent from the Coder access URL and runs it)
+$env:CODER_AGENT_TOKEN = "${token}"
+New-Item -ItemType Directory -Force -Path C:\ProgramData\coder | Out-Null
+Set-Content -Path C:\ProgramData\coder\init.ps1 -Value @'
 ${init_script}
+'@
+$act = New-ScheduledTaskAction -Execute 'powershell.exe' -Argument '-NoProfile -ExecutionPolicy Bypass -File C:\ProgramData\coder\init.ps1'
+Register-ScheduledTask -TaskName 'CoderAgent' -Action $act -Trigger (New-ScheduledTaskTrigger -AtStartup) -User 'SYSTEM' -RunLevel Highest -Force | Out-Null
+Start-ScheduledTask -TaskName 'CoderAgent'
