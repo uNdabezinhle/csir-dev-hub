@@ -37,6 +37,7 @@ services:
       CODER_ACCESS_URL: http://${HOST_IP}:${CODER_PORT}
       CODER_TELEMETRY_ENABLE: "false"
       CODER_UPDATE_CHECK: "false"
+      CODER_OAUTH2_GITHUB_DEFAULT_PROVIDER_ENABLE: "false"
       # Observability
       CODER_PROMETHEUS_ENABLE: "true"
       CODER_PROMETHEUS_ADDRESS: 0.0.0.0:2112

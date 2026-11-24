@@ -1,0 +1,20 @@
+{
+  "_comment": "CSIR Dev Hub role model. LDAP group (cn) -> Keycloak group (federated) -> portal role -> Coder site roles.",
+  "roles": [
+    {"id": "hub-admin",       "ldap_group": "devhub-hub-admins",       "coder_roles": ["owner"],          "description": "Full platform administration"},
+    {"id": "image-publisher", "ldap_group": "devhub-image-publishers", "coder_roles": ["template-admin"], "description": "Publishes/curates templates and images"},
+    {"id": "project-owner",   "ldap_group": "devhub-project-owners",   "coder_roles": [],                 "description": "Owns projects, manages members and project quotas"},
+    {"id": "engineer",        "ldap_group": "devhub-engineers",        "coder_roles": [],                 "description": "Creates and uses workspaces within quota"},
+    {"id": "auditor",         "ldap_group": "devhub-auditors",         "coder_roles": ["auditor"],        "description": "Read-only access to everything incl. audit log"},
+    {"id": "guest",           "ldap_group": "devhub-guests",           "coder_roles": [],                 "description": "Time-boxed, single small workspace, dev profile only"}
+  ],
+  "demo_users": [
+    {"uid": "ndabezinhle", "cn": "Ndabezinhle Hlongwane", "sn": "Hlongwane", "groups": ["devhub-hub-admins", "devhub-project-owners"], "mfa_required": true},
+    {"uid": "ipublisher",  "cn": "Ivy Publisher",  "sn": "Publisher", "groups": ["devhub-image-publishers", "devhub-engineers"]},
+    {"uid": "powner",      "cn": "Peter Owner",    "sn": "Owner",     "groups": ["devhub-project-owners", "devhub-engineers"]},
+    {"uid": "engineer1",   "cn": "Thandi Engineer","sn": "Engineer",  "groups": ["devhub-engineers"]},
+    {"uid": "engineer2",   "cn": "Sipho Engineer", "sn": "Engineer",  "groups": ["devhub-engineers"]},
+    {"uid": "auditor1",    "cn": "Anele Auditor",  "sn": "Auditor",   "groups": ["devhub-auditors"]},
+    {"uid": "guest1",      "cn": "Gail Guest",     "sn": "Guest",     "groups": ["devhub-guests"]}
+  ]
+}

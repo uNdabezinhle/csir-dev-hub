@@ -17,6 +17,10 @@ OIDC_CLIENT_SECRET=$(gen)
 GRAFANA_ADMIN_PASSWORD=$(gen)
 CODER_ADMIN_EMAIL=admin@csir.local
 CODER_ADMIN_PASSWORD=$(gen)Aa1!
+PORTAL_OIDC_SECRET=$(gen)
+PORTAL_SESSION_KEY=$(gen)$(gen)
+PORTAL_FERNET_KEY=$(python3 -c 'import base64,os;print(base64.urlsafe_b64encode(os.urandom(32)).decode())')
+GUAC_JSON_SECRET=$(openssl rand -hex 16)
 # filled in by scripts/bootstrap.sh
 CODER_SESSION_TOKEN=
 OIDC_ISSUER_URL=

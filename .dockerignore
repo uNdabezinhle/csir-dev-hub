@@ -1,0 +1,5 @@
+secrets
+.git
+**/.terraform
+**/*.tfstate*
+docs

@@ -1,0 +1,7 @@
+PASS 1. password accepted (LDAP) but NO Coder session before MFA; enrolment forced
+PASS 2. TOTP enrolled -> Coder session issued
+PASS 3a. second login: OTP challenge shown, no session yet
+PASS 3b. WRONG OTP rejected -> no Coder session
+PASS 4. correct OTP -> Coder session issued
+cleanup: test OTP credential removed
+exit=0

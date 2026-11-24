@@ -1,0 +1,28 @@
+{
+  "_comment": "Quota defaults per role (effective quota = most generous role the user holds, unless a user override exists), reclaim policy, network profiles and FinOps tiers. Costs are ILLUSTRATIVE placeholders - replace with the Technical Annex costing.",
+  "role_quotas": {
+    "hub-admin":       {"max_workspaces": 10, "max_cpu": 16, "max_mem_gb": 32},
+    "image-publisher": {"max_workspaces": 4,  "max_cpu": 8,  "max_mem_gb": 16},
+    "project-owner":   {"max_workspaces": 4,  "max_cpu": 8,  "max_mem_gb": 16},
+    "engineer":        {"max_workspaces": 3,  "max_cpu": 6,  "max_mem_gb": 12},
+    "auditor":         {"max_workspaces": 1,  "max_cpu": 2,  "max_mem_gb": 4},
+    "guest":           {"max_workspaces": 1,  "max_cpu": 1,  "max_mem_gb": 2}
+  },
+  "reclaim": {"idle_stop_minutes": 120, "stopped_delete_days": 14, "guest_max_age_days": 7, "auto_apply": true, "delete_enabled": false},
+  "network_profiles": {
+    "dev": {"description": "Internet egress allowed (package mirrors, git)", "roles": ["hub-admin","image-publisher","project-owner","engineer","guest"]},
+    "isolated": {"description": "No egress; only the Dev Hub control plane (RANGE / Kali, sensitive data)", "roles": ["hub-admin","image-publisher","project-owner","engineer"]},
+    "windows-licensed": {"description": "Windows VMs; consumes a licence seat; KMS reachable", "roles": ["hub-admin","image-publisher","project-owner","engineer"], "licence_seats": 10}
+  },
+  "finops": {
+    "currency": "ZAR",
+    "active_tier": "70",
+    "hours_per_month_with_autostop": 176,
+    "tiers": {
+      "30": {"users": 30, "vcpu": 96,  "ram_gb": 384,  "storage_tb": 8,  "monthly_cost": 38000},
+      "40": {"users": 40, "vcpu": 128, "ram_gb": 512,  "storage_tb": 12, "monthly_cost": 48000},
+      "60": {"users": 60, "vcpu": 192, "ram_gb": 768,  "storage_tb": 16, "monthly_cost": 66000},
+      "70": {"users": 70, "vcpu": 256, "ram_gb": 1024, "storage_tb": 20, "monthly_cost": 78000}
+    }
+  }
+}

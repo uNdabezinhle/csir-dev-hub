@@ -1,0 +1,18 @@
+groups:
+  - name: csir-devhub
+    rules:
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels: {severity: critical}
+        annotations: {summary: "{{ $labels.job }} is down"}
+      - alert: HostMemoryHigh
+        expr: (1 - node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes) > 0.9
+        for: 5m
+        labels: {severity: warning}
+        annotations: {summary: "Host memory above 90%"}
+      - alert: HostDiskLow
+        expr: node_filesystem_avail_bytes{mountpoint="/"} / node_filesystem_size_bytes{mountpoint="/"} < 0.1
+        for: 10m
+        labels: {severity: warning}
+        annotations: {summary: "Host root disk below 10% free"}
