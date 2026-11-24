@@ -20,6 +20,9 @@ else
   echo "guacamole_db: schema present"
 fi
 ./scripts/dc.sh up -d guacd guacamole >/dev/null 2>&1
+# Session recordings: the named volume is created root-owned; guacd (uid 1000) must be able to write it.
+GD=$(docker ps -qf label=com.docker.compose.service=guacd -f label=com.docker.compose.project=csir-devhub)
+docker exec -u 0 "$GD" sh -c 'chown guacd:guacd /var/lib/guacamole/recordings && chmod 2775 /var/lib/guacamole/recordings'
 URL="http://127.0.0.1:${GUACAMOLE_PORT:-8089}/guacamole"
 for i in $(seq 1 60); do curl -sf -o /dev/null "$URL/" && break; sleep 3; done
 tok() { curl -s -X POST "$URL/api/tokens" --data-urlencode "username=guacadmin" --data-urlencode "password=$1" | python3 -c 'import json,sys;d=json.load(sys.stdin);print(d.get("authToken",""))' 2>/dev/null; }

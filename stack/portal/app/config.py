@@ -28,6 +28,8 @@ BOOTSTRAP_ADMIN_PASSWORD = os.environ.get("PORTAL_BOOTSTRAP_ADMIN_PASSWORD", "")
 GUAC_PUBLIC_URL = os.environ.get("GUAC_PUBLIC_URL", f"http://{HOST_IP}:8089/guacamole")
 GUAC_JSON_SECRET = os.environ.get("GUAC_JSON_SECRET", "")
 GUACD_CONTAINER = os.environ.get("GUACD_CONTAINER", "csir-devhub-guacd-1")
+# Session recording (annex: audit of privileged/remote sessions). Files land in the guac-recordings volume.
+GUAC_RECORDING = os.environ.get("GUAC_RECORDING", "true").lower() == "true"
 GRAFANA_PUBLIC_URL = os.environ.get("GRAFANA_PUBLIC_URL", f"http://{HOST_IP}:3001")
 KEYCLOAK_PUBLIC_URL = os.environ.get("KEYCLOAK_PUBLIC_URL", f"http://{HOST_IP}:8080")
 HEALTH_TARGETS = {

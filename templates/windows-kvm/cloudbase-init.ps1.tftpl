@@ -1,0 +1,9 @@
+#ps1_sysnative
+# cloudbase-init user-data for CSIR Dev Hub Windows workspaces: starts the Coder agent.
+$env:CODER_AGENT_TOKEN = "${token}"
+[Environment]::SetEnvironmentVariable("CODER_AGENT_TOKEN", "${token}", "Machine")
+# Enable RDP (NLA on) for brokered access; firewall limited to the windows-licensed network.
+Set-ItemProperty -Path 'HKLM:\System\CurrentControlSet\Control\Terminal Server' -Name "fDenyTSConnections" -Value 0
+Enable-NetFirewallRule -DisplayGroup "Remote Desktop"
+# Coder agent bootstrap (downloads the agent from the Coder access URL and runs it)
+${init_script}

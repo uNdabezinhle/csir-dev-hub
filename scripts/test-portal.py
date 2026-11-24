@@ -63,9 +63,8 @@ st, _, _ = get(eng, f"{P}/admin/audit"); check("B4 RBAC: engineer denied /admin/
 name = "e2e-server"
 st, body, _ = post(eng, f"{P}/workspaces", {"template": "ubuntu-server", "name": name, "cpu": 1, "memory": 1, "profile": "dev", "ubuntu_version": "24.04"})
 check("C1 engineer provisions ubuntu-server workspace", "being provisioned" in body, re.findall(r'class="flash[^"]*">([^<]+)', body))
-st, body, _ = post(eng, f"{P}/workspaces", {"template": "ubuntu-server", "name": "e2e-too-big", "cpu": 4, "memory": 8, "profile": "dev"})
-st, body, _ = post(eng, f"{P}/workspaces", {"template": "ubuntu-server", "name": "e2e-too-big2", "cpu": 4, "memory": 8, "profile": "dev"})
-check("C2 quota enforced (oversize request denied)", "Quota exceeded" in body, re.findall(r'class="flash[^"]*">([^<]+)', body))
+st, body, _ = post(eng, f"{P}/workspaces", {"template": "ubuntu-server", "name": "e2e-too-big", "cpu": 4, "memory": 16, "profile": "dev"})
+check("C2 quota enforced (16 GB request > engineer quota 12 GB denied, nothing provisioned)", "Quota exceeded" in body, re.findall(r'class="flash[^"]*">([^<]+)', body))
 ws = None
 for _ in range(60):
     time.sleep(5)
@@ -95,6 +94,8 @@ if ws:
                        env={**os.environ, "DOCKER_HOST": os.environ.get("DOCKER_HOST", "tcp://127.0.0.1:2375")})
     check("D3 secrets mount is read-only", w.returncode != 0)
 post(eng, f"{P}/secrets/delete", {"name": "E2E_TOKEN"})
+st, body, _ = post(eng, f"{P}/workspaces", {"template": "ubuntu-server", "name": "e2e-isolated", "cpu": 1, "memory": 1, "profile": "windows-licensed"})
+check("C5 network-profile policy: windows-licensed not allowed on ubuntu-server", "not allowed" in body, re.findall(r'class="flash[^"]*">([^<]+)', body))
 st, body, _ = get(adm, f"{P}/admin/audit?actor={user}")
 check("E1 audit trail recorded login/create/denied/secret events", all(a in body for a in ["login.oidc", "workspace.create", "denied", "secret.put"]))
 if ws and not keep:

@@ -63,7 +63,25 @@ def _metrics_loop():
         except Exception as e: log.debug("metrics: %s", e)
         time.sleep(60)
 
+def reconcile():
+    """Keep the portal ledger in sync with Coder: import workspaces created outside the portal (CLI/Coder UI) using their
+    build parameters, and mark ledger rows deleted when the workspace no longer exists in Coder."""
+    live = {w["id"]: w for w in coder.workspaces()}
+    led = {r["id"]: r for r in db.q("SELECT * FROM workspaces WHERE deleted_at IS NULL")}
+    with db.tx() as c:
+        for wid in set(led) - set(live):
+            c.execute("UPDATE workspaces SET deleted_at=? WHERE id=?", (time.time(), wid))
+    for wid in set(live) - set(led):
+        if db.one("SELECT 1 FROM workspaces WHERE id=?", (wid,)): continue
+        w = live[wid]; bp = coder.build_params(w["latest_build"]["id"])
+        with db.tx() as c:
+            c.execute("INSERT INTO workspaces(id,owner,name,template,project_id,profile,cpu,mem_gb,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+                      (wid, w["owner_name"], w["name"], w["template_name"], None, bp.get("network_profile", "dev"),
+                       int(bp.get("cpu", 0) or 0), int(bp.get("memory", 0) or 0), "import", time.time()))
+    return live
+
 def refresh_metrics():
+    reconcile()
     for src in ("local", "oidc"):
         USERS.labels(source=src).set(db.one("SELECT COUNT(*) n FROM users WHERE auth_source=?", (src,))["n"])
     WORKSPACES.clear(); cpu = mem = 0

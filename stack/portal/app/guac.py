@@ -5,7 +5,7 @@ import base64, hashlib, hmac, json, time, logging
 from urllib.parse import quote
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
-from .config import GUAC_JSON_SECRET, GUAC_PUBLIC_URL, GUACD_CONTAINER
+from .config import GUAC_JSON_SECRET, GUAC_PUBLIC_URL, GUACD_CONTAINER, GUAC_RECORDING
 log = logging.getLogger("guac")
 
 def _encrypt(payload: dict) -> str:
@@ -33,4 +33,8 @@ def rdp_link(username, ws, hostname, rdp_password, network_name, ttl_s=300):
         "protocol": "rdp", "parameters": {"hostname": hostname, "port": "3389", "username": "coder", "password": rdp_password,
         "security": "any", "ignore-cert": "true", "resize-method": "display-update", "enable-wallpaper": "false",
         "server-layout": "en-us-qwerty", "timezone": "Africa/Johannesburg"}}}}
+    if GUAC_RECORDING:
+        payload["connections"][conn]["parameters"].update({
+            "recording-path": "/var/lib/guacamole/recordings", "create-recording-path": "true",
+            "recording-name": f"{username}-{ws['owner_name']}-{ws['name']}-{time.strftime('%Y%m%dT%H%M%S')}.guac"})
     return f"{GUAC_PUBLIC_URL}/?data={quote(_encrypt(payload), safe='')}"

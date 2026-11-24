@@ -203,10 +203,18 @@ resource "docker_volume" "home" {
   }
 }
 
-# Per-user secrets volume (written by the CSIR Dev Hub portal), mounted read-only.
-resource "docker_volume" "secrets" {
-  name = "csir-secrets-${local.username}"
-  lifecycle { ignore_changes = all }
+# Per-user secrets volume `csir-secrets-<user>` is created/written by the CSIR Dev Hub portal and shared by all of the
+# user's workspaces, so it is NOT a Terraform-managed resource (deleting one workspace must not delete it). Docker
+# creates it on first mount if the portal has not yet.
+removed {
+  from = docker_volume.secrets
+  lifecycle {
+    destroy = false
+  }
+}
+
+locals {
+  secrets_volume = "csir-secrets-${local.username}"
 }
 
 # ---------------------------------------------------------------- network isolation
@@ -254,7 +262,7 @@ resource "docker_container" "workspace" {
   }
   volumes {
     container_path = "/run/csir-secrets"
-    volume_name    = docker_volume.secrets.name
+    volume_name    = local.secrets_volume
     read_only      = true
   }
 
