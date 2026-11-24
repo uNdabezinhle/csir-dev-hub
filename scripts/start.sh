@@ -12,7 +12,7 @@ export DOCKER_HOST="${DOCKER_HOST:-tcp://127.0.0.1:2375}"
 ./scripts/gen-secrets.sh >/dev/null
 set -a; . ./.env; set +a
 H=${HOST_IP:-127.0.0.1}
-wait_url() { for _ in $(seq 1 100); do curl -sf -o /dev/null "$1" && return 0; sleep 3; done; echo "timeout waiting for $1" >&2; return 1; }
+wait_url() { for _ in $(seq 1 200); do curl -sf -m 5 -o /dev/null "$1" && return 0; sleep 3; done; echo "timeout waiting for $1" >&2; return 1; }
 
 echo "==> compose up"
 ./scripts/dc.sh up -d --build
