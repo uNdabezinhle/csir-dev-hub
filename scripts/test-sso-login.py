@@ -2,11 +2,12 @@
 """End-to-end SSO check: Coder -> Keycloak (LDAP-federated user) -> Coder session.
 Usage: scripts/test-sso-login.py <ldap-uid> [coder|portal]   (password read from secrets/devhub.env LDAP_DEMO_PASSWORD)"""
 import sys, os, re, html, urllib.request, urllib.parse, http.cookiejar, json
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from devhub_testlib import cookiejar  # noqa: E402
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 S = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/secrets/devhub.env") if "=" in l and not l.startswith("#"))
 E = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/.env") if "=" in l and not l.startswith("#"))
 user = sys.argv[1] if len(sys.argv) > 1 else "engineer1"; target = sys.argv[2] if len(sys.argv) > 2 else "coder"
-jar = http.cookiejar.CookieJar(); op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+jar = cookiejar(); op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 start = (f"http://{E['HOST_IP']}:{E['CODER_PORT']}/api/v2/users/oidc/callback" if target == "coder"
          else f"http://{E['HOST_IP']}:{E['ADMIN_CONSOLE_PORT']}/auth/oidc/login")
 r = op.open(start); page = r.read().decode()

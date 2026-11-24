@@ -12,6 +12,7 @@
  K. KVM provider (libvirt capacity, VM snapshot) and backup status
 Usage: scripts/test-portal.py [--keep]   (deletes the test workspace unless --keep)"""
 import sys, os, re, html, json, time, hmac, hashlib, struct, base64, subprocess, urllib.request, urllib.parse, http.cookiejar
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from devhub_testlib import cookiejar  # noqa: E402
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 S = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/secrets/devhub.env") if "=" in l and not l.startswith("#"))
 E = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/.env") if "=" in l and not l.startswith("#"))
@@ -19,7 +20,7 @@ H = E["HOST_IP"]; P = f"http://{H}:{E['ADMIN_CONSOLE_PORT']}"; KC = f"http://{H}
 keep = "--keep" in sys.argv; results = []
 def check(name, ok, extra=""): results.append(ok); print(("PASS " if ok else "FAIL ") + name + (f"  [{extra}]" if extra and not ok else ""))
 def session():
-    jar = http.cookiejar.CookieJar(); return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    jar = cookiejar(); return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 def get(op, url):
     try: r = op.open(url); return r.status, r.read().decode(errors="ignore"), r.geturl()
     except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="ignore"), url

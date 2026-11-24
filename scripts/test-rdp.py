@@ -6,6 +6,7 @@ signed token at Guacamole's REST API, opens the Guacamole WebSocket tunnel and w
 Also asserts that no host port publishes 3389. Usage: scripts/test-rdp.py [workspace-name] (default demo-desktop)
 Requires: pip install websocket-client"""
 import os, re, sys, json, time, subprocess, urllib.request, urllib.parse, http.cookiejar
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from devhub_testlib import cookiejar  # noqa: E402
 import websocket
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 S = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/secrets/devhub.env") if "=" in l and not l.startswith("#"))
@@ -15,7 +16,7 @@ name = sys.argv[1] if len(sys.argv) > 1 else "demo-desktop"; results = []
 def check(n, ok, extra=""): results.append(ok); print(("PASS " if ok else "FAIL ") + n + (f"  [{extra}]" if extra and not ok else ""))
 class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl): return None
-jar = http.cookiejar.CookieJar()
+jar = cookiejar()
 op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
 op.open(f"{P}/login", urllib.parse.urlencode({"username": "admin", "password": S["CODER_ADMIN_PASSWORD"]}).encode()).read()
 ws = next(w for w in json.loads(op.open(f"{P}/api/workspaces").read()) if w["name"] == name)

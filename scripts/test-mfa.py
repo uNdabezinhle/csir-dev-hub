@@ -5,6 +5,7 @@ For a demo LDAP user: (1) password-only login lands on forced TOTP enrolment, no
 (4) re-login with the correct code -> Coder session. Cleanup removes the test OTP credential (unless --keep).
 Usage: scripts/test-mfa.py [ldap-uid] [--keep]"""
 import sys, os, re, html, json, time, hmac, hashlib, struct, base64, urllib.request, urllib.parse, http.cookiejar
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__))); from devhub_testlib import cookiejar  # noqa: E402
 ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), ".."))
 S = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/secrets/devhub.env") if "=" in l and not l.startswith("#"))
 E = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/.env") if "=" in l and not l.startswith("#"))
@@ -22,7 +23,7 @@ def admin(method, path, body=None):
     d = r.read(); return json.loads(d) if d else None
 def form_action(page): return html.unescape(re.search(r'action="([^"]+)"', page).group(1))
 def password_step():
-    jar = http.cookiejar.CookieJar(); op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
+    jar = cookiejar(); op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
     page = op.open(CODER + "/api/v2/users/oidc/callback").read().decode()
     r = op.open(form_action(page), urllib.parse.urlencode({"username": user, "password": S["LDAP_DEMO_PASSWORD"]}).encode())
     return jar, op, r, r.read().decode()
