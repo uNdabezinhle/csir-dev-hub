@@ -1,0 +1,13 @@
+[Unit]
+Description=CSIR Dev Hub backup (databases, LDAP, portal, volumes, config) + restore verification
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# adjust to the checkout location; runs as root (or a user in the docker group)
+WorkingDirectory=/opt/csir-devhub
+ExecStart=/opt/csir-devhub/scripts/backup.sh
+ExecStartPost=/opt/csir-devhub/scripts/restore.sh latest --verify
+Nice=10
+IOSchedulingClass=idle
