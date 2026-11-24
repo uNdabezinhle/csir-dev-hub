@@ -1,0 +1,13 @@
+# Overlay: enables "Sign in with CSIR SSO" (Keycloak OIDC; Keycloak federates OpenLDAP users).
+# scripts/dc.sh includes this automatically when OIDC_ISSUER_URL is set in secrets/devhub.env.
+services:
+  coder:
+    environment:
+      CODER_OIDC_ISSUER_URL: ${OIDC_ISSUER_URL}
+      CODER_OIDC_CLIENT_ID: coder
+      CODER_OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET}
+      CODER_OIDC_ALLOW_SIGNUPS: "true"
+      CODER_OIDC_SIGN_IN_TEXT: "Sign in with CSIR SSO (Keycloak / LDAP)"
+      CODER_OIDC_SCOPES: openid,profile,email
+      CODER_OIDC_USERNAME_FIELD: preferred_username
+      CODER_OIDC_IGNORE_EMAIL_VERIFIED: "true"

@@ -1,0 +1,159 @@
+# CSIR Software Development Hub (CSIR Dev Hub) - core stack (PoC)
+# Run via ./scripts/dc.sh (adds secrets/devhub.env) or ./scripts/start.sh
+name: csir-devhub
+
+x-restart: &restart
+  restart: unless-stopped
+
+services:
+  postgres:
+    <<: *restart
+    build: ./stack/postgres
+    image: csir-devhub/postgres:17
+    environment:
+      POSTGRES_USER: coder
+      POSTGRES_DB: coder
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?run scripts/gen-secrets.sh}
+      KEYCLOAK_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+    volumes: [pgdata:/var/lib/postgresql/data]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U coder -d coder"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    mem_limit: 512m
+    networks: [core]
+
+  coder:
+    <<: *restart
+    image: ghcr.io/coder/coder:${CODER_VERSION}
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["${CODER_PORT}:3000"]
+    group_add: ["${DOCKER_GID}"]
+    environment:
+      CODER_PG_CONNECTION_URL: postgresql://coder:${POSTGRES_PASSWORD}@postgres/coder?sslmode=disable
+      CODER_HTTP_ADDRESS: 0.0.0.0:3000
+      CODER_ACCESS_URL: http://${HOST_IP}:${CODER_PORT}
+      CODER_TELEMETRY_ENABLE: "false"
+      CODER_UPDATE_CHECK: "false"
+      # Observability
+      CODER_PROMETHEUS_ENABLE: "true"
+      CODER_PROMETHEUS_ADDRESS: 0.0.0.0:2112
+      CODER_PROMETHEUS_COLLECT_AGENT_STATS: "true"
+      CODER_PROMETHEUS_COLLECT_DB_METRICS: "true"
+      # Auth: local password login is always on. OIDC (Keycloak, federating OpenLDAP)
+      # is layered on by docker-compose.oidc.yml once scripts/bootstrap.sh has configured Keycloak.
+      CODER_DISABLE_PASSWORD_AUTH: "false"
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - coder-home:/home/coder
+    mem_limit: 1g
+    networks: [core]
+
+  keycloak:
+    <<: *restart
+    image: quay.io/keycloak/keycloak:${KEYCLOAK_VERSION}
+    command: ["start", "--import-realm"]
+    depends_on:
+      postgres: {condition: service_healthy}
+    ports: ["${KEYCLOAK_PORT}:8080"]
+    environment:
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres/keycloak
+      KC_DB_USERNAME: keycloak
+      KC_DB_PASSWORD: ${KEYCLOAK_DB_PASSWORD}
+      KC_HOSTNAME: http://${HOST_IP}:${KEYCLOAK_PORT}
+      KC_HTTP_ENABLED: "true"
+      KC_HEALTH_ENABLED: "true"
+      KC_METRICS_ENABLED: "true"
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD}
+      JAVA_OPTS_KC_HEAP: "-Xms128m -Xmx512m"
+    mem_limit: 900m
+    networks: [core]
+
+  openldap:
+    <<: *restart
+    image: osixia/openldap:1.5.0
+    environment:
+      LDAP_ORGANISATION: CSIR
+      LDAP_DOMAIN: csir.local
+      LDAP_ADMIN_PASSWORD: ${LDAP_ADMIN_PASSWORD}
+      LDAP_TLS: "false"
+    volumes:
+      - ldap-data:/var/lib/ldap
+      - ldap-config:/etc/ldap/slapd.d
+    mem_limit: 256m
+    networks: [core]
+
+  prometheus:
+    <<: *restart
+    build: ./stack/prometheus
+    image: csir-devhub/prometheus:local
+    ports: ["${PROMETHEUS_PORT}:9090"]
+    command: ["--config.file=/etc/prometheus/prometheus.yml", "--storage.tsdb.retention.time=15d", "--storage.tsdb.path=/prometheus"]
+    volumes: [prom-data:/prometheus]
+    mem_limit: 512m
+    networks: [core]
+
+  grafana:
+    <<: *restart
+    build: ./stack/grafana
+    image: csir-devhub/grafana:local
+    ports: ["${GRAFANA_PORT}:3000"]
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_DASHBOARDS_DEFAULT_HOME_DASHBOARD_PATH: /etc/grafana/dashboards/csir-devhub.json
+    volumes: [grafana-data:/var/lib/grafana]
+    mem_limit: 384m
+    networks: [core]
+
+  node-exporter:
+    <<: *restart
+    image: prom/node-exporter:latest
+    command: ["--path.rootfs=/host"]
+    pid: host
+    volumes: ["/:/host:ro,rslave"]
+    mem_limit: 128m
+    networks: [core]
+
+  cadvisor:
+    <<: *restart
+    image: gcr.io/cadvisor/cadvisor:latest
+    command: ["--docker_only=true", "--housekeeping_interval=15s", "--store_container_labels=false", "--whitelisted_container_labels=com.coder.workspace_name,com.coder.user_name,com.docker.compose.service"]
+    privileged: true
+    volumes:
+      - /:/rootfs:ro
+      - /var/run:/var/run:ro
+      - /sys:/sys:ro
+      - /var/lib/docker/:/var/lib/docker:ro
+    mem_limit: 256m
+    networks: [core]
+
+  admin-console:
+    <<: *restart
+    build: ./stack/admin-console
+    image: csir-devhub/admin-console:local
+    ports: ["${ADMIN_CONSOLE_PORT}:8088"]
+    environment:
+      CODER_URL: http://coder:3000
+      CODER_PUBLIC_URL: http://${HOST_IP}:${CODER_PORT}
+      CODER_SESSION_TOKEN: ${CODER_SESSION_TOKEN:-}
+      HOST_IP: ${HOST_IP}
+    mem_limit: 128m
+    networks: [core]
+
+networks:
+  core:
+    name: csir-devhub-core
+
+volumes:
+  pgdata:
+  coder-home:
+  ldap-data:
+  ldap-config:
+  prom-data:
+  grafana-data:
