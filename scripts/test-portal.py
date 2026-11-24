@@ -18,6 +18,8 @@ S = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/secrets/devhub.env") if 
 E = dict(l.strip().split("=", 1) for l in open(f"{ROOT}/.env") if "=" in l and not l.startswith("#"))
 H = E["HOST_IP"]; P = f"http://{H}:{E['ADMIN_CONSOLE_PORT']}"; KC = f"http://{H}:{E['KEYCLOAK_PORT']}"
 keep = "--keep" in sys.argv; results = []
+KVM = E.get("KVM_ENABLED", "false") == "true"   # Docker Desktop / no-KVM hosts: VM + Windows checks are skipped
+def skip(name, why): print(f"SKIP {name}  [{why}]")
 def check(name, ok, extra=""): results.append(ok); print(("PASS " if ok else "FAIL ") + name + (f"  [{extra}]" if extra and not ok else ""))
 def session():
     jar = cookiejar(); return urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
@@ -149,21 +151,24 @@ for s in jget(adm, "/api/licences")[1]["open_seats"]:
 # lifecycle with real Coder workspaces on the windows-licensed profile (windows-kvm template: the build itself fails on
 # the PoC box - no KVM / golden image - but the workspace exists in Coder, which is what the seat is tied to)
 kms_used = lambda: next(p for p in jget(adm, "/api/licences")[1]["pools"] if p["id"] == "windows-kms")["used"]
-u0 = kms_used()
-st, b, _ = post(adm, f"{P}/workspaces", {"template": "windows-kvm", "name": "e2e-win-a", "cpu": 2, "memory": 4, "profile": "windows-licensed"})
-wsa = next((w for w in json.loads(get(adm, f"{P}/api/workspaces")[1]) if w["name"] == "e2e-win-a"), None)
-check("F5 create on windows-licensed checks out a seat tied to the workspace", bool(wsa) and kms_used() == u0 + 1, flashes(b))
-if wsa:
-    time.sleep(10); post(adm, f"{P}/workspaces/{wsa['id']}/delete", {})
-    check("F6 portal delete returns the seat", kms_used() == u0, kms_used())
-    wait_ws_gone(wsa["id"])
-st, b, _ = post(adm, f"{P}/workspaces", {"template": "windows-kvm", "name": "e2e-win-b", "cpu": 2, "memory": 4, "profile": "windows-licensed"})
-wsb = next((w for w in json.loads(get(adm, f"{P}/api/workspaces")[1]) if w["name"] == "e2e-win-b"), None)
-if wsb:
-    time.sleep(10); coder_api("POST", f"/api/v2/workspaces/{wsb['id']}/builds", {"transition": "delete"})   # outside the portal
-    gone = wait_ws_gone(wsb["id"])
-    st, rec, _ = post(adm, f"{P}/admin/reconcile", {})
-    check("F7 workspace deleted outside the portal -> reconcile returns its seat", gone and kms_used() == u0, rec)
+if KVM:
+    u0 = kms_used()
+    st, b, _ = post(adm, f"{P}/workspaces", {"template": "windows-kvm", "name": "e2e-win-a", "cpu": 2, "memory": 4, "profile": "windows-licensed"})
+    wsa = next((w for w in json.loads(get(adm, f"{P}/api/workspaces")[1]) if w["name"] == "e2e-win-a"), None)
+    check("F5 create on windows-licensed checks out a seat tied to the workspace", bool(wsa) and kms_used() == u0 + 1, flashes(b))
+    if wsa:
+        time.sleep(10); post(adm, f"{P}/workspaces/{wsa['id']}/delete", {})
+        check("F6 portal delete returns the seat", kms_used() == u0, kms_used())
+        wait_ws_gone(wsa["id"])
+    st, b, _ = post(adm, f"{P}/workspaces", {"template": "windows-kvm", "name": "e2e-win-b", "cpu": 2, "memory": 4, "profile": "windows-licensed"})
+    wsb = next((w for w in json.loads(get(adm, f"{P}/api/workspaces")[1]) if w["name"] == "e2e-win-b"), None)
+    if wsb:
+        time.sleep(10); coder_api("POST", f"/api/v2/workspaces/{wsb['id']}/builds", {"transition": "delete"})   # outside the portal
+        gone = wait_ws_gone(wsb["id"])
+        st, rec, _ = post(adm, f"{P}/admin/reconcile", {})
+        check("F7 workspace deleted outside the portal -> reconcile returns its seat", gone and kms_used() == u0, rec)
+else:
+    for n in ("F5", "F6", "F7"): skip(f"{n} windows-licensed workspace seat lifecycle", "KVM_ENABLED=false: no windows-kvm template")
 st, aud, _ = get(adm, f"{P}/admin/audit?action=licence")
 check("F8 audit trail has licence.checkout / licence.return / denied / pool resize", all(a in aud for a in ["licence.checkout", "licence.return", "denied", "licence.pool.resize"]))
 
@@ -213,16 +218,22 @@ check("H5 RBAC: engineer denied billing export (403); /admin/billing renders for
       get(eng, f"{P}/api/billing/usage")[0] == 403 and get(adm, f"{P}/admin/billing?group_by=project")[0] == 200)
 
 # K. KVM provider + backup status ---------------------------------------------------------------------------------
-st, kv = jget(adm, "/api/kvm")
-doms = {d["name"]: d for d in kv.get("domains", [])} if isinstance(kv, dict) else {}
-check("K1 KVM provider: libvirt capacity + demo-vm domain running", kv.get("capabilities", {}).get("status") == "ok" and doms.get("csir-admin-demo-vm", {}).get("state") == "running",
-      (kv.get("capabilities", {}).get("status"), list(doms)))
-st, b, _ = post(adm, f"{P}/admin/kvm/csir-admin-demo-vm/snapshot", {"snapshot": "e2e-snap"})
-has = "e2e-snap" in {d["name"]: d for d in jget(adm, "/api/kvm")[1]["domains"]}["csir-admin-demo-vm"].get("snapshots", [])
-post(adm, f"{P}/admin/kvm/csir-admin-demo-vm/delete-snapshot", {"snapshot": "e2e-snap"})
-check("K2 portal snapshot of a VM workspace (create + delete)", has, flashes(b))
+if KVM:
+    st, kv = jget(adm, "/api/kvm")
+    doms = {d["name"]: d for d in kv.get("domains", [])} if isinstance(kv, dict) else {}
+    check("K1 KVM provider: libvirt capacity + demo-vm domain running", kv.get("capabilities", {}).get("status") == "ok" and doms.get("csir-admin-demo-vm", {}).get("state") == "running",
+          (kv.get("capabilities", {}).get("status"), list(doms)))
+    st, b, _ = post(adm, f"{P}/admin/kvm/csir-admin-demo-vm/snapshot", {"snapshot": "e2e-snap"})
+    has = "e2e-snap" in {d["name"]: d for d in jget(adm, "/api/kvm")[1]["domains"]}["csir-admin-demo-vm"].get("snapshots", [])
+    post(adm, f"{P}/admin/kvm/csir-admin-demo-vm/delete-snapshot", {"snapshot": "e2e-snap"})
+    check("K2 portal snapshot of a VM workspace (create + delete)", has, flashes(b))
+else:
+    skip("K1/K2 KVM provider + VM snapshot", "KVM_ENABLED=false (Docker Desktop has no /dev/kvm)")
 st, bk = jget(adm, "/api/backup/status")
-check("K3 backup status visible in portal (last backup + restore test ok)", isinstance(bk, dict) and bk.get("status") == "ok" and bk.get("verify", {}).get("status") == "ok", bk)
+if not KVM and isinstance(bk, dict) and bk.get("status") != "ok" and E.get("DESKTOP_MODE") == "true":
+    skip("K3 backup status", f"no backup run on this laptop yet ({bk.get('status')}); run scripts/backup.sh via devhub.ps1")
+else:
+    check("K3 backup status visible in portal (last backup + restore test ok)", isinstance(bk, dict) and bk.get("status") == "ok" and bk.get("verify", {}).get("status") == "ok", bk)
 if ws and not keep:
     post(eng, f"{P}/workspaces/{ws['id']}/delete", {}); print("cleanup: e2e workspace delete requested")
 for c in kc_admin("GET", f"/users/{uid}/credentials"):
