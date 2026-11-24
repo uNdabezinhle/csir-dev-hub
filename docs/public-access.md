@@ -82,7 +82,7 @@ Pinggy's documented *SSH-over-SSL* mode (ssh with `ProxyCommand=openssl s_client
 
 ```bash
 ./scripts/tunnel-pinggy.sh up       # background supervisor + 4 tunnels; prints the URLs (~15 s)
-./scripts/tunnel-pinggy.sh status   # current URLs (also in public.env: PUBLIC_*_URL)
+./scripts/tunnel-pinggy.sh status   # LIVE health of each URL (public DNS + HTTP via the public IP)
 ./scripts/tunnel-pinggy.sh down     # stop + portal back to local URLs
 ```
 
@@ -94,9 +94,21 @@ Pinggy's documented *SSH-over-SSL* mode (ssh with `ProxyCommand=openssl s_client
 | `PUBLIC_GUACAMOLE_URL` | Guacamole (target of the portal's "Open desktop" token redirect) | portal-minted token; `guacadmin` / `GUACADMIN_PASSWORD` |
 
 * **Lifetime:** free Pinggy tunnels expire after **60 minutes** and come back with a **new random hostname**.
-  The supervisor (`logs-tunnel/pinggy-supervisor.log`) reconnects, re-checks every URL from outside, and only then
-  rewrites `public.env` and recreates the portal (`docker-compose.public-lite.yml`) so its links follow. Share the
-  new portal URL after each rotation (`tunnel-pinggy.sh status`). A box restart stops the tunnels; run `up` again.
+* **Health checks (every 60 s, `HEALTH_INTERVAL`):** the supervisor (`logs-tunnel/pinggy-supervisor.log`) checks each
+  tunnel three ways:
+  1. the ssh process is still running;
+  2. the hostname resolves through **public DNS** (`https://dns.google/resolve`);
+  3. an HTTP request sent **to that public IP** (`curl --resolve`) answers 2xx/3xx.
+
+  The box's own resolver hands out a local proxy address for every hostname, so on its own it can't tell whether a
+  tunnel is reachable from outside. That gap is how a dead URL went on being reported as "current" on 2026-11-24.
+* **Recovery:** if a check fails (and fails again on a re-check 10 s later), or the ssh process has exited or hung,
+  the supervisor kills that tunnel and starts a new one. It waits until the new hostname passes the public checks, then
+  rewrites `public.env` and recreates the portal (lite mode only) so its links follow. Every step is logged.
+  Measured recovery: a killed tunnel was replaced in about 35 s, and a hung (SIGSTOP) tunnel in about 75 s.
+* **Finding the current URLs:** `tunnel-pinggy.sh status`, `logs-tunnel/public-urls.json` (rewritten after every
+  check), or **`GET /public-urls`** on the portal. That endpoint needs a signed-in user and returns the URLs,
+  their health, the last check time and a `stale` flag. A box restart stops the tunnels; run `up` again.
 * **Browser interstitial:** the first visit to each free hostname shows a Pinggy "Caution… served for free" page;
   click through once per hostname (portal, Coder, Guacamole, Grafana).
 * **Lite = Coder and Keycloak configs untouched.** `CODER_ACCESS_URL`, the OIDC issuer and `KC_HOSTNAME` stay on

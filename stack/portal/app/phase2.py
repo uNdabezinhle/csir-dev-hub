@@ -180,3 +180,20 @@ def register(app, need, render, flash, ip):
     @app.get("/api/backup/status")
     def api_backup(request: Request):
         need(request, "health.view"); return ext("backup").status()
+
+    # ------------------------------------------------------------ public tunnel URLs (scripts/tunnel-pinggy.sh)
+    @app.get("/public-urls")
+    def public_urls(request: Request):
+        """Current public (tunnel) URLs with their last health check, written every ~60 s by the tunnel supervisor.
+        Signed-in users only; the URLs are public anyway, nothing secret is returned."""
+        import os
+        need(request)
+        try:
+            with open("/data/public-urls.json") as f: d = json.load(f)
+            age = time.time() - dt.datetime.fromisoformat(d["checked_at"]).timestamp()
+            d["age_seconds"] = int(age); d["stale"] = age > 300
+            return d
+        except FileNotFoundError:
+            urls = {k: os.environ.get(v, "") for k, v in (("portal", "PORTAL_PUBLIC_URL"), ("coder", "CODER_PUBLIC_URL"),
+                    ("grafana", "GRAFANA_PUBLIC_URL"), ("guacamole", "GUAC_PUBLIC_URL"))}
+            return {"provider": None, "note": "no tunnel supervisor status yet (local mode?)", "configured": urls}
