@@ -21,7 +21,7 @@ jobs:
           # dummy values only - real secrets are generated on the server by scripts/gen-secrets.sh
           for k in POSTGRES_PASSWORD KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_PASSWORD LDAP_ADMIN_PASSWORD LDAP_DEMO_PASSWORD \
                    OIDC_CLIENT_SECRET GRAFANA_ADMIN_PASSWORD CODER_ADMIN_PASSWORD PORTAL_OIDC_SECRET PORTAL_SESSION_KEY \
-                   PORTAL_FERNET_KEY GUAC_JSON_SECRET GUAC_DB_PASSWORD GUACADMIN_PASSWORD CODER_SESSION_TOKEN; do
+                   PORTAL_FERNET_KEY GUAC_JSON_SECRET GUAC_DB_PASSWORD GUACADMIN_PASSWORD CODER_SESSION_TOKEN BACKUP_PASSPHRASE; do
             echo "$k=ci-dummy" >> secrets/devhub.env
           done
           echo "OIDC_ISSUER_URL=http://keycloak.example/realms/csir" >> secrets/devhub.env
@@ -30,6 +30,7 @@ jobs:
           docker compose --env-file .env --env-file secrets/devhub.env -f docker-compose.yml config -q
           docker compose --env-file .env --env-file secrets/devhub.env -f docker-compose.yml -f docker-compose.oidc.yml config -q
           docker compose --env-file .env --env-file secrets/devhub.env -f docker-compose.yml -f docker-compose.oidc.yml -f docker-compose.guacamole.yml config -q
+          docker compose --env-file .env --env-file secrets/devhub.env -f docker-compose.yml -f docker-compose.guacamole.yml -f docker-compose.kvm.yml config -q
 
   terraform:
     name: Terraform fmt/validate (Coder templates)
@@ -82,3 +83,80 @@ jobs:
           docker build -t csir-devhub/prometheus:ci stack/prometheus
           docker build -t csir-devhub/grafana:ci stack/grafana
           docker build -t csir-devhub/postgres:ci stack/postgres
+          docker build -t csir-devhub/libvirt:ci stack/libvirt
+          docker build -t csir-devhub/coder:ci stack/coder
+
+  trivy:
+    name: Trivy image scan (${{ matrix.image }}) - report-only
+    runs-on: ubuntu-24.04
+    # Report-only in CI: findings are published as artifacts + job summary and never fail the pipeline. The blocking
+    # gate is the portal's publish gate (image publisher approval, max critical CVEs - stack/portal/config/policy.json).
+    continue-on-error: true
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: ubuntu-server
+            context: images/ubuntu-server
+            args: UBUNTU_VERSION=24.04
+          - image: ubuntu-desktop
+            context: images/ubuntu-desktop
+            args: UBUNTU_VERSION=24.04
+          - image: kali
+            context: images/kali
+            args: ""
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build ${{ matrix.image }}
+        run: |
+          ARGS=""; [ -n "${{ matrix.args }}" ] && ARGS="--build-arg ${{ matrix.args }}"
+          docker build $ARGS -t csir-devhub/${{ matrix.image }}:ci ${{ matrix.context }}
+      - name: Trivy scan (JSON report)
+        # Trivy runs from its pinned official container image (same version as the portal scanner), not a 3rd-party action.
+        run: |
+          docker run --rm -v /var/run/docker.sock:/var/run/docker.sock -v "$PWD":/out aquasec/trivy:0.76.2 \
+            image --quiet --scanners vuln --format json --exit-code 0 --output /out/trivy-${{ matrix.image }}.json \
+            csir-devhub/${{ matrix.image }}:ci
+          sudo chown "$(id -u)" trivy-${{ matrix.image }}.json
+      - name: Summary
+        if: always()
+        run: |
+          python3 - <<'PY' >> "$GITHUB_STEP_SUMMARY"
+          import json, collections
+          d = json.load(open("trivy-${{ matrix.image }}.json"))
+          c = collections.Counter(v["Severity"] for r in d.get("Results", []) for v in (r.get("Vulnerabilities") or []))
+          print("### Trivy: csir-devhub/${{ matrix.image }}")
+          print("| CRITICAL | HIGH | MEDIUM | LOW |\n|---|---|---|---|")
+          print(f"| {c['CRITICAL']} | {c['HIGH']} | {c['MEDIUM']} | {c['LOW']} |")
+          print("\nReport-only: publishing is gated in the portal (Admin -> Images).")
+          PY
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: trivy-${{ matrix.image }}
+          path: trivy-${{ matrix.image }}.json
+
+  trivy-config:
+    name: Trivy IaC/Dockerfile misconfig (report-only)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: trivy config (Dockerfiles, compose, Terraform)
+        run: docker run --rm -v "$PWD":/src aquasec/trivy:0.76.2 config --exit-code 0 --quiet /src
+
+  packer:
+    name: Packer validate (golden image pipelines)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-packer@v3
+      - name: init + validate
+        env:
+          PACKER_GITHUB_API_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          T=$(mktemp -d); printf '#cloud-config\n' > $T/user-data; touch $T/meta-data $T/autounattend.xml
+          packer init packer/ubuntu-golden && (cd packer/ubuntu-golden && packer validate -var build_password=ci -var seed_dir=$T .)
+          packer init packer/windows-2022 && (cd packer/windows-2022 && packer validate -var admin_password=ci -var answer_dir=$T .)
+          packer fmt -check -recursive packer/
