@@ -1,8 +1,10 @@
 #!/usr/bin/env bash
 # Starts the desktop services inside a CSIR Dev Hub desktop workspace.
-# RDP password for the 'coder' user comes from $CSIR_RDP_PASSWORD (injected by the template).
+# RDP password (portal secret /run/csir-secrets/rdp_password, or $CSIR_RDP_PASSWORD) for the 'coder' user comes from $CSIR_RDP_PASSWORD (injected by the template).
 set -u
 [ -f ~/.xsession ] || echo xfce4-session > ~/.xsession
+# Prefer the portal-managed secret (mounted read-only from the per-user secrets volume)
+[ -r /run/csir-secrets/rdp_password ] && CSIR_RDP_PASSWORD="$(cat /run/csir-secrets/rdp_password)"
 if [ -n "${CSIR_RDP_PASSWORD:-}" ]; then echo "coder:${CSIR_RDP_PASSWORD}" | sudo chpasswd; fi
 # xrdp (RDP on 3389) - used by Guacamole and native RDP clients (via coder port-forward)
 sudo mkdir -p /var/run/xrdp && sudo chown xrdp /var/run/xrdp 2>/dev/null || true

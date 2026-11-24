@@ -1,0 +1,17 @@
+{% extends "base.html" %}{% block body %}
+<h1>Quotas &amp; network profiles</h1>
+<h2>Role defaults</h2><div class="card"><table><tr><th>Role</th><th>Max workspaces</th><th>Max vCPU</th><th>Max RAM GB</th></tr>
+{% for r,q in role_quotas.items() %}<tr><td><span class="badge">{{ r }}</span></td><td>{{ q.max_workspaces }}</td><td>{{ q.max_cpu }}</td><td>{{ q.max_mem_gb }}</td></tr>{% endfor %}</table>
+<p class="muted">Effective quota = most generous role held; per-user overrides win. Project quotas apply additionally. Defined in <code>stack/portal/config/policy.json</code>.</p></div>
+<h2>Per-user overrides</h2><div class="card"><table><tr><th>User</th><th>WS</th><th>vCPU</th><th>GB</th><th>Note</th><th></th></tr>
+{% for o in overrides %}<tr><td>{{ o.username }}</td><td>{{ o.max_workspaces }}</td><td>{{ o.max_cpu }}</td><td>{{ o.max_mem_gb }}</td><td>{{ o.note }}</td>
+<td>{% if can(user,'quotas.manage') %}<form class="inline" method="post" action="/admin/quotas"><input type="hidden" name="username" value="{{ o.username }}"><input type="hidden" name="max_workspaces" value="0"><input type="hidden" name="max_cpu" value="0"><input type="hidden" name="max_mem_gb" value="0"><input type="hidden" name="remove" value="1"><button class="btn sm red">remove</button></form>{% endif %}</td></tr>
+{% else %}<tr><td colspan="6" class="muted">None</td></tr>{% endfor %}</table>
+{% if can(user,'quotas.manage') %}<form method="post" action="/admin/quotas" class="row" style="margin-top:10px"><div><label>User</label><select name="username">{% for u2 in users %}<option>{{ u2 }}</option>{% endfor %}</select></div>
+<div><label>WS</label><input name="max_workspaces" type="number" value="3" style="width:60px"></div><div><label>vCPU</label><input name="max_cpu" type="number" value="6" style="width:60px"></div>
+<div><label>GB</label><input name="max_mem_gb" type="number" value="12" style="width:60px"></div><div><label>Note / ticket</label><input name="note"></div><button class="btn teal">Save override</button></form>{% endif %}</div>
+<h2>Network profiles</h2><div class="card"><table><tr><th>Profile</th><th>Description</th><th>Allowed roles</th><th>Implementation</th></tr>
+{% for k,p in profiles.items() %}<tr><td><span class="badge">{{ k }}</span></td><td>{{ p.description }}{% if k=='windows-licensed' %}<br>Licence seats: {{ licence_used }} / {{ licence.seats }} used ({{ licence.name }}){% endif %}</td>
+<td>{% for r in p.roles %}<span class="badge">{{ r }}</span>{% endfor %}</td>
+<td class="muted">{% if k=='dev' %}per-workspace bridge network with NAT egress{% elif k=='isolated' %}per-workspace <code>internal</code> network + control-plane-only gateway (no internet){% else %}KVM/libvirt network with KMS access (planned; template stub){% endif %}</td></tr>{% endfor %}</table></div>
+{% endblock %}

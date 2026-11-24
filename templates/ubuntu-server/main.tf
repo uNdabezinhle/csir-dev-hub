@@ -94,8 +94,8 @@ locals {
   isolated   = data.coder_parameter.network_profile.value == "isolated"
   access_url = data.coder_workspace.me.access_url
   # In isolated mode the agent reaches Coder through a per-workspace gateway container.
-  agent_url  = local.isolated ? "http://csir-gw-${local.ws_slug}:3000" : local.access_url
-  host_port  = regex("^https?://[^/]+", local.access_url)
+  agent_url = local.isolated ? "http://csir-gw-${local.ws_slug}:3000" : local.access_url
+  host_port = regex("^https?://[^/]+", local.access_url)
 }
 
 # ---------------------------------------------------------------- agent
@@ -208,10 +208,10 @@ resource "docker_network" "ws" {
 
 # Isolated profile: control-plane-only gateway (TCP relay to Coder; no other egress).
 resource "docker_container" "gateway" {
-  count    = local.isolated && data.coder_workspace.me.start_count > 0 ? 1 : 0
-  image    = "alpine/socat:latest"
-  name     = "csir-gw-${local.ws_slug}"
-  command  = ["TCP-LISTEN:3000,fork,reuseaddr", "TCP:${replace(replace(local.host_port, "http://", ""), "https://", "")}"]
+  count   = local.isolated && data.coder_workspace.me.start_count > 0 ? 1 : 0
+  image   = "alpine/socat:latest"
+  name    = "csir-gw-${local.ws_slug}"
+  command = ["TCP-LISTEN:3000,fork,reuseaddr", "TCP:${replace(replace(local.host_port, "http://", ""), "https://", "")}"]
   networks_advanced { name = docker_network.ws.name }
   networks_advanced { name = "bridge" }
   memory = 32
@@ -219,17 +219,17 @@ resource "docker_container" "gateway" {
 
 # ---------------------------------------------------------------- workspace container
 resource "docker_container" "workspace" {
-  count    = data.coder_workspace.me.start_count
-  image    = "csir-devhub/ubuntu-server:${data.coder_parameter.ubuntu_version.value}"
-  name     = "coder-${local.ws_slug}"
-  hostname = data.coder_workspace.me.name
-  user     = "coder"
+  count      = data.coder_workspace.me.start_count
+  image      = "csir-devhub/ubuntu-server:${data.coder_parameter.ubuntu_version.value}"
+  name       = "coder-${local.ws_slug}"
+  hostname   = data.coder_workspace.me.name
+  user       = "coder"
   entrypoint = ["sh", "-c", replace(coder_agent.main.init_script, local.access_url, local.agent_url)]
   env        = ["CODER_AGENT_TOKEN=${coder_agent.main.token}", "CODER_AGENT_URL=${local.agent_url}"]
 
-  memory    = data.coder_parameter.memory.value * 1024
+  memory     = data.coder_parameter.memory.value * 1024
   cpu_shares = data.coder_parameter.cpu.value * 1024
-  cpu_set   = join(",", range(0, data.coder_parameter.cpu.value))
+  cpu_set    = join(",", range(0, data.coder_parameter.cpu.value))
 
   networks_advanced { name = docker_network.ws.name }
 

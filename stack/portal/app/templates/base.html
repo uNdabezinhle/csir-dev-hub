@@ -1,0 +1,20 @@
+<!doctype html><html><head><meta charset="utf-8"><title>{% block title %}CSIR Dev Hub{% endblock %}</title>
+<link rel="stylesheet" href="/static/style.css"></head><body>
+{% if user %}<header><div class="brand">CSIR <span>Software Development Hub</span></div>
+<nav>
+ <a href="/">My workspaces</a>
+ <a href="/projects">Projects</a>
+ {% if can(user,'workspace.own') %}<a href="/secrets">Secrets</a>{% endif %}
+ {% if can(user,'workspace.view_all') %}<a href="/admin/workspaces">All workspaces</a>{% endif %}
+ {% if can(user,'users.view') %}<a href="/admin/users">Users</a>{% endif %}
+ {% if can(user,'images.view') or can(user,'catalog.manage') %}<a href="/admin/images">Images</a>{% endif %}
+ {% if can(user,'quotas.view') or can(user,'quotas.manage') %}<a href="/admin/quotas">Quotas</a>{% endif %}
+ {% if can(user,'workspace.view_all') %}<a href="/admin/reclaim">Reclaim</a>{% endif %}
+ {% if can(user,'finops.view') %}<a href="/admin/finops">FinOps</a>{% endif %}
+ {% if can(user,'audit.view') %}<a href="/admin/audit">Audit</a>{% endif %}
+ {% if can(user,'health.view') %}<a href="/admin/health">Health</a>{% endif %}
+</nav>
+<div class="who">{{ user.full_name or user.username }} ({{ user.auth_source }})<br>
+{% for r in user.roles %}<span class="badge">{{ r }}</span>{% endfor %} <a href="/logout" style="color:#fff">Sign out</a></div></header>{% endif %}
+<main>{% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
+</body></html>

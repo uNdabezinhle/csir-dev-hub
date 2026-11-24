@@ -1,0 +1,44 @@
+# Overlay: Apache Guacamole 1.6 RDP/VNC/SSH broker for CSIR Dev Hub.
+# Annex rule: no raw 3389 on the lab LAN. guacd has NO published ports; it reaches workspace RDP endpoints only over
+# private Docker networks (the portal attaches guacd to a workspace's network on demand).
+# Start:  ./scripts/dc.sh up -d guacd guacamole   (scripts/dc.sh includes this file when GUACAMOLE_ENABLED=true in .env)
+# DB:     database guacamole_db / role guacamole in the shared postgres; schema from stack/guacamole/initdb.sql
+#         (applied by scripts/bootstrap-guacamole.sh, which also rotates the default guacadmin password).
+services:
+  guacd:
+    image: guacamole/guacd:1.6.0
+    restart: unless-stopped
+    environment:
+      GUACD_LOG_LEVEL: info
+    volumes: [guac-recordings:/var/lib/guacamole/recordings]
+    mem_limit: 512m
+    networks: [core]
+
+  guacamole:
+    image: guacamole/guacamole:1.6.0
+    restart: unless-stopped
+    depends_on:
+      guacd: {condition: service_started}
+      postgres: {condition: service_healthy}
+    ports: ["${GUACAMOLE_PORT:-8089}:8080"]   # web UI at http://HOST:8089/guacamole/
+    environment:
+      GUACD_HOSTNAME: guacd
+      GUACD_PORT: "4822"
+      # Database-backed users/connections (admin UI, history, sharing)
+      POSTGRESQL_HOSTNAME: postgres
+      POSTGRESQL_DATABASE: guacamole_db
+      POSTGRESQL_USERNAME: guacamole
+      POSTGRESQL_PASSWORD: ${GUAC_DB_PASSWORD}
+      POSTGRESQL_AUTO_CREATE_ACCOUNTS: "true"
+      # Portal-minted, signed+encrypted short-lived connection tokens (guacamole-auth-json)
+      JSON_SECRET_KEY: ${GUAC_JSON_SECRET}
+      # Session recording (enable per connection with recording-path=${HISTORY_PATH}/${HISTORY_UUID})
+      RECORDING_SEARCH_PATH: /var/lib/guacamole/recordings
+      # TOTP_ENABLED: "true"   # see docs/guacamole-rdp.md - would also challenge portal (JSON) users; prefer OPENID_* via Keycloak
+      REMOTE_IP_VALVE_ENABLED: "true"
+    volumes: [guac-recordings:/var/lib/guacamole/recordings]
+    mem_limit: 768m
+    networks: [core]
+
+volumes:
+  guac-recordings:

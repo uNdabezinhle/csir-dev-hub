@@ -1,0 +1,13 @@
+{% extends "base.html" %}{% block body %}
+<h1>Images &amp; catalog</h1>
+<h2>Workspace catalog</h2><div class="card"><table><tr><th>Template</th><th>Kind / OS</th><th>Coder template</th><th>Profiles</th><th>Published</th>{% if can(user,'catalog.manage') %}<th>Edit</th>{% endif %}</tr>
+{% for c in catalog %}{% set t = templates.get(c.template) %}<tr><td><b>{{ c.display_name }}</b><br><code>{{ c.template }}</code></td><td>{{ c.kind }}<br>{{ c.os }}</td>
+<td>{% if t %}<span class="badge ok">pushed</span> {{ t.active_user_count }} users<br><span class="muted">default TTL {{ (t.default_ttl_ms/3600000)|round(1) }} h</span>{% else %}<span class="badge flag">not pushed</span>{% endif %}</td>
+<td>{% for p in c.profiles %}<span class="badge">{{ p }}</span>{% endfor %}</td><td>{{ 'yes' if c.published else 'no' }}</td>
+{% if can(user,'catalog.manage') %}<td><form method="post" action="/admin/images/{{ c.template }}" class="row"><select name="published"><option value="1" {% if c.published %}selected{% endif %}>published</option><option value="0" {% if not c.published %}selected{% endif %}>hidden</option></select>
+<input name="default_cpu" type="number" value="{{ c.default_cpu }}" style="width:55px" title="default vCPU"><input name="default_mem" type="number" value="{{ c.default_mem }}" style="width:55px" title="default GB">
+<input name="description" value="{{ c.description }}" size="30"><button class="btn sm light">save</button></form></td>{% endif %}</tr>{% endfor %}</table></div>
+<h2>Built images (label org.csir.devhub.image)</h2><div class="card"><table><tr><th>Tags</th><th>Kind</th><th>ID</th><th>Size</th><th>Created</th><th>Scan</th></tr>
+{% for i in images %}<tr><td>{% for t in i.tags %}<code>{{ t }}</code> {% endfor %}</td><td>{{ i.kind }}</td><td>{{ i.id }}</td><td>{{ i.size_mb }} MB</td><td>{{ i.created }}</td><td><span class="badge">{{ i.scan }}</span></td></tr>{% endfor %}</table>
+<p class="muted">Publishing workflow: build image (<code>scripts/build-images.sh</code>) &rarr; scan (extension point) &rarr; <code>coder templates push</code> &rarr; publish here.</p></div>
+{% endblock %}

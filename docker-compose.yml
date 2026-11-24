@@ -38,6 +38,8 @@ services:
       CODER_TELEMETRY_ENABLE: "false"
       CODER_UPDATE_CHECK: "false"
       CODER_OAUTH2_GITHUB_DEFAULT_PROVIDER_ENABLE: "false"
+      CODER_MAX_TOKEN_LIFETIME: 8760h         # portal service token
+      CODER_MAX_ADMIN_TOKEN_LIFETIME: 8760h
       # Observability
       CODER_PROMETHEUS_ENABLE: "true"
       CODER_PROMETHEUS_ADDRESS: 0.0.0.0:2112
@@ -134,17 +136,37 @@ services:
     mem_limit: 256m
     networks: [core]
 
-  admin-console:
+  portal:
     <<: *restart
-    build: ./stack/admin-console
-    image: csir-devhub/admin-console:local
+    build:
+      context: .
+      dockerfile: stack/portal/Dockerfile
+    image: csir-devhub/portal:local
+    depends_on:
+      coder: {condition: service_started}
     ports: ["${ADMIN_CONSOLE_PORT}:8088"]
+    group_add: ["${DOCKER_GID}"]
     environment:
+      HOST_IP: ${HOST_IP}
       CODER_URL: http://coder:3000
       CODER_PUBLIC_URL: http://${HOST_IP}:${CODER_PORT}
       CODER_SESSION_TOKEN: ${CODER_SESSION_TOKEN:-}
-      HOST_IP: ${HOST_IP}
-    mem_limit: 128m
+      PORTAL_PUBLIC_URL: http://${HOST_IP}:${ADMIN_CONSOLE_PORT}
+      OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
+      PORTAL_OIDC_CLIENT_ID: devhub-portal
+      PORTAL_OIDC_SECRET: ${PORTAL_OIDC_SECRET}
+      PORTAL_SESSION_KEY: ${PORTAL_SESSION_KEY}
+      PORTAL_FERNET_KEY: ${PORTAL_FERNET_KEY}
+      PORTAL_BOOTSTRAP_ADMIN_PASSWORD: ${CODER_ADMIN_PASSWORD}
+      GUAC_JSON_SECRET: ${GUAC_JSON_SECRET}
+      GUAC_PUBLIC_URL: http://${HOST_IP}:${GUACAMOLE_PORT:-8089}/guacamole
+      GUACD_CONTAINER: csir-devhub-guacd-1
+      GRAFANA_PUBLIC_URL: http://${HOST_IP}:${GRAFANA_PORT}
+      KEYCLOAK_PUBLIC_URL: http://${HOST_IP}:${KEYCLOAK_PORT}
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - portal-data:/data
+    mem_limit: 256m
     networks: [core]
 
 networks:
@@ -158,3 +180,4 @@ volumes:
   ldap-config:
   prom-data:
   grafana-data:
+  portal-data:

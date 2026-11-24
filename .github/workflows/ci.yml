@@ -1,0 +1,84 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+jobs:
+  compose:
+    name: Validate Docker Compose
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Create dummy env files from examples
+        run: |
+          cp .env.example .env
+          mkdir -p secrets
+          # dummy values only - real secrets are generated on the server by scripts/gen-secrets.sh
+          for k in POSTGRES_PASSWORD KEYCLOAK_DB_PASSWORD KEYCLOAK_ADMIN_PASSWORD LDAP_ADMIN_PASSWORD LDAP_DEMO_PASSWORD \
+                   OIDC_CLIENT_SECRET GRAFANA_ADMIN_PASSWORD CODER_ADMIN_PASSWORD PORTAL_OIDC_SECRET PORTAL_SESSION_KEY \
+                   PORTAL_FERNET_KEY GUAC_JSON_SECRET GUAC_DB_PASSWORD GUACADMIN_PASSWORD CODER_SESSION_TOKEN; do
+            echo "$k=ci-dummy" >> secrets/devhub.env
+          done
+          echo "OIDC_ISSUER_URL=http://keycloak.example/realms/csir" >> secrets/devhub.env
+      - name: docker compose config (core + overlays)
+        run: |
+          docker compose --env-file .env --env-file secrets/devhub.env -f docker-compose.yml config -q
+          docker compose --env-file .env --env-file secrets/devhub.env -f docker-compose.yml -f docker-compose.oidc.yml config -q
+          docker compose --env-file .env --env-file secrets/devhub.env -f docker-compose.yml -f docker-compose.oidc.yml -f docker-compose.guacamole.yml config -q
+
+  terraform:
+    name: Terraform fmt/validate (Coder templates)
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: hashicorp/setup-terraform@v3
+      - name: fmt
+        run: terraform fmt -check -recursive templates/
+      - name: init + validate each template
+        run: |
+          set -e
+          for d in templates/*/; do
+            [ -n "$(ls "$d"/*.tf 2>/dev/null)" ] || continue
+            echo "::group::$d"
+            terraform -chdir="$d" init -backend=false -input=false
+            terraform -chdir="$d" validate
+            echo "::endgroup::"
+          done
+
+  lint-dockerfiles:
+    name: Hadolint (advisory)
+    runs-on: ubuntu-24.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: hadolint
+        run: |
+          for f in $(git ls-files '*Dockerfile'); do
+            echo "== $f"; docker run --rm -i hadolint/hadolint hadolint --ignore DL3008 --ignore DL3059 - < "$f" || true
+          done
+
+  portal:
+    name: Portal (Python) checks + image build
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install deps
+        run: pip install -r stack/portal/requirements.txt
+      - name: Byte-compile + import smoke test
+        run: |
+          python -m compileall -q stack/portal/app scripts
+          cd stack/portal && PORTAL_DATA_DIR=/tmp/devhub PORTAL_CONFIG_DIR=$PWD/config python -c "import shutil; shutil.copy('../../identity/roles.json','config/roles.json'); import app.main"
+      - name: Build images (no push)
+        run: |
+          docker build -f stack/portal/Dockerfile -t csir-devhub/portal:ci .
+          docker build -t csir-devhub/prometheus:ci stack/prometheus
+          docker build -t csir-devhub/grafana:ci stack/grafana
+          docker build -t csir-devhub/postgres:ci stack/postgres

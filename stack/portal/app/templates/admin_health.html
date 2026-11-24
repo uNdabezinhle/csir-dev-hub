@@ -1,0 +1,6 @@
+{% extends "base.html" %}{% block body %}
+<h1>Platform health</h1><div class="grid">{% for k,v in summary.items() %}<div class="card"><div class="muted">{{ k|replace('_',' ') }}</div><div class="kpi">{{ v }}</div></div>{% endfor %}</div>
+<div class="card"><table><tr><th>Service</th><th>Status</th><th>Detail</th><th>Latency</th></tr>{% for c in checks %}<tr><td>{{ c.name }}</td><td><span class="badge {{ 'ok' if c.ok else 'err' }}">{{ 'up' if c.ok else 'down' }}</span></td><td>{{ c.detail }}</td><td>{{ c.ms }} ms</td></tr>{% endfor %}</table></div>
+<div class="card"><b>Consoles</b>: <a href="{{ CODER }}" target="_blank">Coder admin</a> &middot; <a href="{{ GRAFANA }}/d/csir-devhub" target="_blank">Grafana</a> &middot; <a href="{{ KEYCLOAK }}/admin/master/console/#/csir" target="_blank">Keycloak</a> &middot; <a href="{{ GUAC }}/" target="_blank">Guacamole</a></div>
+<h2>Extension modules</h2><div class="card"><table>{% for k,v in extensions.items() %}<tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>{% endfor %}</table></div>
+{% endblock %}

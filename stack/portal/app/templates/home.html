@@ -1,0 +1,42 @@
+{% extends "base.html" %}{% block body %}
+<h1>My workspaces</h1>
+{% if error %}<div class="flash err">Coder API error: {{ error }}</div>{% endif %}
+<div class="grid">
+ <div class="card"><div class="muted">Workspaces</div><div class="kpi">{{ usage.workspaces }} / {{ quota.max_workspaces }}</div>
+  <div class="meter"><div style="width:{{ (100*usage.workspaces/(quota.max_workspaces or 1))|round }}%"></div></div></div>
+ <div class="card"><div class="muted">vCPU allocated</div><div class="kpi">{{ usage.cpu }} / {{ quota.max_cpu }}</div>
+  <div class="meter"><div style="width:{{ (100*usage.cpu/(quota.max_cpu or 1))|round }}%"></div></div></div>
+ <div class="card"><div class="muted">Memory allocated</div><div class="kpi">{{ usage.mem_gb }} / {{ quota.max_mem_gb }} GB</div>
+  <div class="meter"><div style="width:{{ (100*usage.mem_gb/(quota.max_mem_gb or 1))|round }}%"></div></div>
+  <div class="muted" style="font-size:11px">quota source: {{ quota.source }}</div></div>
+</div>
+<div class="card"><table><tr><th>Name</th><th>Template</th><th>Status</th><th>Size / profile</th><th>Est. cost</th><th>Open</th><th>Actions</th></tr>
+{% for w in workspaces %}<tr>
+ <td><b>{{ w.name }}</b><br><span class="muted">last used {{ w.last_used or '-' }}</span></td><td>{{ w.template }}{% if w.outdated %} <span class="badge pending">update</span>{% endif %}</td>
+ <td><span class="badge {{ w.status }}">{{ w.status }}</span><br><span class="muted">agent {{ w.agent }}</span></td>
+ <td>{{ w.cpu or '?' }} vCPU / {{ w.mem_gb or '?' }} GB<br><span class="badge">{{ w.profile }}</span></td>
+ <td>{% if w.cost %}{{ w.cost.currency }} {{ w.cost.hourly }}/h<br><span class="muted">~{{ w.cost.monthly }}/mo</span>{% else %}-{% endif %}</td>
+ <td>{% if w.status=='running' %}
+   {% if w.vscode %}<a class="btn teal sm" target="_blank" href="{{ w.vscode }}?folder=/home/coder">VS Code</a>{% endif %}
+   {% if w.rdp %}<a class="btn sm" target="_blank" href="/workspaces/{{ w.id }}/rdp">Desktop (RDP)</a>{% endif %}
+   {% if w.novnc %}<a class="btn light sm" target="_blank" href="{{ w.novnc }}">noVNC</a>{% endif %}
+   <a class="btn light sm" target="_blank" href="{{ w.coder_url }}">Coder</a>
+   <div class="muted" style="font-size:11px">SSH: <code>coder ssh {{ w.name }}</code></div>{% else %}-{% endif %}</td>
+ <td>{% for a in (['stop','restart'] if w.status=='running' else ['start']) + (['update'] if w.outdated else []) + ['delete'] %}
+   <form class="inline" method="post" action="/workspaces/{{ w.id }}/{{ a }}" {% if a=='delete' %}onsubmit="return confirm('Delete {{ w.name }} and its home volume?')"{% endif %}>
+   <button class="btn sm {{ 'red' if a=='delete' else 'light' }}">{{ a }}</button></form>{% endfor %}</td></tr>
+{% else %}<tr><td colspan="7" class="muted">No workspaces yet - create one below.</td></tr>{% endfor %}</table></div>
+
+{% if can(user,'workspace.own') %}<h2>New workspace</h2><div class="grid">
+{% for c in catalog %}<div class="card"><b>{{ c.display_name }}</b> {% if not c.published %}<span class="badge flag">unpublished</span>{% endif %}
+ <div class="muted">{{ c.os }} &middot; {{ c.kind }}</div><p>{{ c.description }}</p>
+ {% if c.allowed %}<form method="post" action="/workspaces"><input type="hidden" name="template" value="{{ c.template }}">
+ <div class="row"><div><label>Name</label><input name="name" required pattern="[a-z][a-z0-9-]{1,30}[a-z0-9]" placeholder="my-{{ c.template.split('-')[0] }}" size="14"></div>
+ <div><label>vCPU</label><select name="cpu">{% for n in [1,2,4] %}<option {% if n==c.default_cpu %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></div>
+ <div><label>RAM GB</label><select name="memory">{% for n in [1,2,4,8] %}<option {% if n==c.default_mem %}selected{% endif %}>{{ n }}</option>{% endfor %}</select></div></div>
+ <div class="row"><div><label>Network profile</label><select name="profile">{% for p in c.allowed %}<option>{{ p }}</option>{% endfor %}</select></div>
+ {% if c.template=='ubuntu-server' %}<div><label>Ubuntu</label><select name="ubuntu_version"><option>24.04</option><option>26.04</option></select></div>{% endif %}
+ {% if projects %}<div><label>Project</label><select name="project_id"><option value="">(personal)</option>{% for p in projects %}<option value="{{ p.id }}">{{ p.name }}</option>{% endfor %}</select></div>{% endif %}</div>
+ <p class="muted" style="font-size:11px">Est. {{ rates.currency }} {{ '%.2f'|format(c.default_cpu*rates.per_vcpu_hour + c.default_mem*rates.per_gb_hour) }}/h at default size (tier {{ rates.tier }}); auto-stops after 8 h, idle reclaim applies.</p>
+ <button class="btn teal">Create</button></form>{% else %}<p class="muted">Not available for your role.</p>{% endif %}</div>{% endfor %}</div>{% endif %}
+{% endblock %}
