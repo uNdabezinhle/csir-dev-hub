@@ -179,6 +179,7 @@ policy, IDE health, secrets, audit, licence broker, image scanning and approval,
 See [docs/annex-mapping.md](docs/annex-mapping.md).
 
 ## Further docs
+- [docs/local-windows.md](docs/local-windows.md) - run the stack on a Windows 11 laptop with Docker Desktop (`scripts/start-desktop.ps1`, http://localhost URLs)
 - [docs/auth-mfa.md](docs/auth-mfa.md): Keycloak, LDAP and MFA design and demo
 - [docs/ide-options.md](docs/ide-options.md): code-server, VS Code Desktop, JetBrains, desktops
 - [docs/guacamole-rdp.md](docs/guacamole-rdp.md): brokered RDP
