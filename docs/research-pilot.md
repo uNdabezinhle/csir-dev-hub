@@ -28,6 +28,21 @@ Each row records a project ID, a UTC observation timestamp, and allocated vCPU-h
 real usage or identities. Include the fixture, script, and expected output in the reviewed pilot commit and make that
 commit available to both maintainers through their own repository accounts.
 
+### Candidate image review
+
+If the Ubuntu Server catalog image is blocked by image policy, a Python-only candidate can omit the native build
+toolchain. Build under a separate tag from the repository root:
+
+```bash
+docker build --pull --build-arg UBUNTU_VERSION=24.04 --build-arg WORKSPACE_BUILD_TOOLS=false \
+  -t csir-devhub/ubuntu-server:pilot-python-candidate images/ubuntu-server
+```
+
+Run the synthetic report in the candidate and scan it in **Administration → Images**. An image publisher must
+review the scan before the catalog and template reference that image. Keep existing workspace image tags in place
+during candidate testing. Omitting headers reduces the packages in the candidate image. Host kernel maintenance
+remains a separate control.
+
 ### Participant task
 
 1. Open the shared blueprint link, start a timer, and launch your own workspace. Record the first time you can open
