@@ -194,6 +194,8 @@ See [docs/annex-mapping.md](docs/annex-mapping.md).
 
 ## Further docs
 
+- [docs/project-delivery.md](docs/project-delivery.md): native SDLC projects, external invitations, and the staging gate
+
 - [docs/research-pilot.md](docs/research-pilot.md): blueprint pilot, provisioning records, and dataset and compute readiness
 
 - [docs/upgrade-acceptance.md](docs/upgrade-acceptance.md): upgrade, rollback, release checks, and production readiness

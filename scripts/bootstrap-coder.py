@@ -20,6 +20,19 @@ CODER = f"http://127.0.0.1:{E.get('CODER_PORT', '3000')}"
 CONTAINER = f"{E.get('COMPOSE_PROJECT_NAME', 'csir-devhub')}-coder-1"
 IMAGES = {"ubuntu-server": "csir-devhub/ubuntu-server:24.04", "ubuntu-desktop": "csir-devhub/ubuntu-desktop:24.04",
           "kali": "csir-devhub/kali:rolling"}
+PILOT_TEMPLATE = "ubuntu-server-pilot"
+
+
+def pilot_source():
+    overlay = os.path.join(ROOT, "templates", PILOT_TEMPLATE, "pilot.auto.tfvars.json")
+    catalog = os.path.join(ROOT, "stack", "portal", "config", "catalog.json")
+    with open(overlay, encoding="utf-8") as f:
+        pinned = json.load(f)["workspace_image_id"]
+    with open(catalog, encoding="utf-8") as f:
+        item = next(i for i in json.load(f)["items"] if i["template"] == PILOT_TEMPLATE)
+    if pinned != item["pinned_image_id"]:
+        raise RuntimeError("Pilot template image ID does not match the catalog")
+    return overlay, item["image"], pinned
 
 def req(method, path, body=None, tok=None):
     h = {"Content-Type": "application/json"}
@@ -66,6 +79,17 @@ def cli(tok, *args):
 def push(tok, names):
     for n in names:
         img = IMAGES.get(n)
+        template_dir = n
+        overlay = None
+        if n == PILOT_TEMPLATE:
+            template_dir = "ubuntu-server"
+            overlay, img, pinned_id = pilot_source()
+            inspected = subprocess.run(
+                ["docker", "image", "inspect", "--format", "{{.Id}}", img], capture_output=True, text=True,
+            )
+            if inspected.returncode or inspected.stdout.strip() != pinned_id:
+                print("   ubuntu-server-pilot: local image must match the pinned catalog ID", file=sys.stderr)
+                raise SystemExit(1)
         if img and subprocess.run(["docker", "image", "inspect", img], capture_output=True).returncode != 0:
             print(f"   {n}: image {img} not built - skipped"); continue
         staging = subprocess.run(
@@ -77,9 +101,14 @@ def push(tok, names):
         source = f"{staging}/source"
         try:
             subprocess.run(
-                ["docker", "cp", os.path.join(ROOT, "templates", n), f"{CONTAINER}:{source}"],
+                ["docker", "cp", os.path.join(ROOT, "templates", template_dir), f"{CONTAINER}:{source}"],
                 check=True, capture_output=True,
             )
+            if overlay:
+                subprocess.run(
+                    ["docker", "cp", overlay, f"{CONTAINER}:{source}/pilot.auto.tfvars.json"],
+                    check=True, capture_output=True,
+                )
             r = cli(tok, "templates", "push", n, "-d", source, "--yes")
         finally:
             subprocess.run(["docker", "exec", "--user", "0", CONTAINER, "rm", "-rf", staging], capture_output=True)

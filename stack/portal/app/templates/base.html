@@ -16,6 +16,9 @@
 {%- endmacro %}
 {% macro navigation() %}
 <nav aria-label="Portal navigation">
+{% if user.auth_source == 'external' %}
+  <section class="nav-group"><p>Workspace</p>{{ nav_link('/delivery/external/projects', 'My projects') }}</section>
+{% else %}
   <section class="nav-group">
     <p>Workspace</p>
     {{ nav_link('/', 'My workspaces') }}
@@ -42,10 +45,11 @@
     {% if can(user,'health.view') %}{{ nav_link('/admin/health', 'Health') }}{% endif %}
   </section>
   {% endif %}
+{% endif %}
 </nav>
 {% endmacro %}
 {% macro brand() %}
-<a class="brand" href="{{ '/' if user else '/login' }}">
+<a class="brand" href="{{ '/delivery/external/projects' if user and user.auth_source == 'external' else '/' if user else '/login' }}">
   <span class="brand-mark">CSIR</span><span>Dev Hub<small>Software Development Hub</small></span>
 </a>
 {% endmacro %}
@@ -72,7 +76,7 @@
           <p class="muted account-source">{{ user.auth_source|upper }} account</p>
           <div class="roles">{% for role in user.roles %}<span class="badge">{{ role }}</span>{% endfor %}</div>
           {{ theme_picker() }}
-          <form method="post" action="/logout">{{ csrf() }}<button class="btn light" type="submit">Sign out</button></form>
+          <form method="post" action="{{ '/delivery/external/sign-out' if user.auth_source == 'external' else '/logout' }}">{{ csrf() }}<button class="btn light" type="submit">Sign out</button></form>
         </div>
       </details>
     </header>

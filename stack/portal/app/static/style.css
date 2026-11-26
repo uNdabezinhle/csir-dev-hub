@@ -81,6 +81,8 @@ summary::-webkit-details-marker { display: none; }
 .card > h2:first-child { margin-top: 0; }
 .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 17rem), 1fr)); gap: .85rem; }
 .grid > .card { margin-bottom: 0; }
+.sdlc-tabs { margin-bottom: 1rem; }
+.sdlc-text { white-space: pre-wrap; overflow-wrap: anywhere; }
 .grid + .card { margin-top: .85rem; }
 .health-summary { grid-template-columns: repeat(auto-fit, minmax(min(100%, 11rem), 1fr)); }
 .quota-grid { grid-template-columns: repeat(3, minmax(0, 1fr)); }

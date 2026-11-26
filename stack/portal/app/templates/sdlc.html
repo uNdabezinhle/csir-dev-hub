@@ -1,0 +1,157 @@
+{% extends "base.html" %}
+{% from "components.html" import csrf, page_heading with context %}
+{% block title %}{{ project.name }} delivery · CSIR Dev Hub{% endblock %}
+{% macro work_card(item) %}
+<article class="card" id="work-{{ item.number }}">
+  <h3>#{{ item.number }} {{ item.title }}</h3>
+  <p>{{ item.kind|capitalize }} · {{ item.status|replace('-', ' ') }} · {{ item.priority }} priority</p>
+  {% if item.owner %}<p>Assigned to {{ item.owner }}</p>{% endif %}
+  {% if item.description %}<p class="sdlc-text">{{ item.description }}</p>{% endif %}
+  {% if item.related_number %}<p><a href="/delivery/{{ project.id }}?tab=work#work-{{ item.related_number }}">Related work #{{ item.related_number }}</a></p>{% endif %}
+  {% if item.reference_url %}<p><a href="{{ item.reference_url }}" rel="noreferrer">Linked evidence for #{{ item.number }}</a></p>{% endif %}
+  {% if role in ('lead','contributor','qa') %}
+  <form class="row" method="post" action="/delivery/{{ project.id }}/work/{{ item.number }}/status">
+    {{ csrf() }}<label>Status for #{{ item.number }} <select name="status">
+      {% for status in statuses %}<option{% if status == item.status %} selected{% endif %}>{{ status }}</option>{% endfor %}
+    </select></label><button class="btn sm light">Update status</button>
+  </form>{% endif %}
+  {% if user.auth_source != 'external' and role in ('lead','contributor','qa') %}
+  <details><summary>Edit #{{ item.number }}</summary>
+    <form class="row" method="post" action="/delivery/{{ project.id }}/work/{{ item.number }}/edit">
+      {{ csrf() }}<label>Title <input name="title" maxlength="160" value="{{ item.title }}" required></label>
+      <label>Priority <select name="priority">{% for priority in priorities %}<option{% if priority == item.priority %} selected{% endif %}>{{ priority }}</option>{% endfor %}</select></label>
+      <label>Assignee <select name="owner"><option value="">Unassigned</option><option{% if project.owner == item.owner %} selected{% endif %}>{{ project.owner }}</option>{% for member in members if member.username != project.owner %}<option{% if member.username == item.owner %} selected{% endif %}>{{ member.username }}</option>{% endfor %}</select></label>
+      <label>Milestone <select name="milestone"><option value="0">None</option>{% for milestone in milestones %}<option value="{{ milestone.id }}"{% if milestone.id == item.milestone_id %} selected{% endif %}>{{ milestone.title }}</option>{% endfor %}</select></label>
+      <label>Related work <select name="related"><option value="0">None</option>{% for other in work if other.number != item.number %}<option value="{{ other.number }}"{% if other.number == item.related_number %} selected{% endif %}>#{{ other.number }} {{ other.title }}</option>{% endfor %}</select></label>
+      <label>Evidence or PR URL <input type="url" name="reference" value="{{ item.reference_url or '' }}"></label>
+      <label>Description <textarea name="description" maxlength="8000">{{ item.description }}</textarea></label>
+      <button class="btn light">Save work item</button>
+    </form>
+  </details>{% endif %}
+  <details><summary>Comments for #{{ item.number }}</summary>
+    {% for comment in comments.get(item.number, []) %}
+    <p class="sdlc-text"><strong>{{ comment.actor }}</strong> · {{ comment.created_at|ts }}<br>{{ comment.body }}</p>
+    {% else %}<p>No comments yet.</p>{% endfor %}
+    {% if role in ('lead','contributor','commenter','qa','release') %}
+    <form method="post" action="/delivery/{{ project.id }}/work/{{ item.number }}/comments">
+      {{ csrf() }}<label>Comment on #{{ item.number }} <textarea name="body" maxlength="4000" required></textarea></label>
+      <button class="btn sm light">Post comment</button>
+    </form>{% endif %}
+  </details>
+</article>
+{% endmacro %}
+{% block body %}
+{{ page_heading(project.name, 'Plan work, review evidence, and coordinate releases.') }}
+<nav aria-label="Project sections" class="row sdlc-tabs">
+  {% for section in ('overview','work','milestones','releases','people') if section != 'people' or role == 'lead' %}
+    <a class="btn {{ 'light' if section != tab }}" href="/delivery/{{ project.id }}?tab={{ section }}"{% if section == tab %} aria-current="page"{% endif %}>{{ section|capitalize }}</a>
+  {% endfor %}
+</nav>
+{% if tab == 'overview' %}
+  <div class="grid">
+    <section class="card"><h2>Work items</h2><p>{{ work|length }} total · {{ work|selectattr('status','equalto','done')|list|length }} done</p><a href="?tab=work">Open work</a></section>
+    <section class="card"><h2>Milestones</h2><p>{{ milestones|length }} planned</p><a href="?tab=milestones">Open milestones</a></section>
+    <section class="card"><h2>Releases</h2><p>{{ releases|length }} candidates</p><a href="?tab=releases">Review releases</a></section>
+  </div>
+  {% if user.auth_source != 'external' %}<p><a href="/projects/{{ project.id }}/blueprints">Blueprints, provisioning records, and requests</a></p>{% endif %}
+{% elif tab == 'work' %}
+  <h2>Work</h2>
+  <form class="card row" method="get"><input type="hidden" name="tab" value="work">
+    <label>View <select name="view"><option value="list">List</option><option value="board"{% if view == 'board' %} selected{% endif %}>Board</option></select></label>
+    <label>Status <select name="status"><option value="">All statuses</option>{% for status in statuses %}<option{% if status == selected_status %} selected{% endif %}>{{ status }}</option>{% endfor %}</select></label>
+    <label>Type <select name="kind"><option value="">All types</option>{% for kind in kinds %}<option{% if kind == selected_kind %} selected{% endif %}>{{ kind }}</option>{% endfor %}</select></label>
+    <label>Milestone <select name="milestone"><option value="">All milestones</option>{% for entry in milestones %}<option value="{{ entry.id }}"{% if entry.id == selected_milestone %} selected{% endif %}>{{ entry.title }}</option>{% endfor %}</select></label>
+    <button class="btn light">Apply filters</button>
+  </form>
+  {% if role in ('lead','contributor','qa') %}
+  <details class="card"><summary>New work item</summary>
+    <form class="row" method="post" action="/delivery/{{ project.id }}/work">
+      {{ csrf() }}<label>Title <input name="title" maxlength="160" required></label>
+      <label>Type <select name="kind">{% for kind in kinds %}<option>{{ kind }}</option>{% endfor %}</select></label>
+      <label>Priority <select name="priority">{% for priority in priorities %}<option{% if priority == 'normal' %} selected{% endif %}>{{ priority }}</option>{% endfor %}</select></label>
+      {% if user.auth_source != 'external' %}<label>Assignee <select name="owner"><option value="">Unassigned</option><option>{{ project.owner }}</option>{% for member in members if member.username != project.owner %}<option>{{ member.username }}</option>{% endfor %}</select></label>{% endif %}
+      <label>Milestone <select name="milestone"><option value="0">None</option>{% for entry in milestones %}<option value="{{ entry.id }}">{{ entry.title }}</option>{% endfor %}</select></label>
+      <label>Related work <select name="related"><option value="0">None</option>{% for entry in work %}<option value="{{ entry.number }}">#{{ entry.number }} {{ entry.title }}</option>{% endfor %}</select></label>
+      <label>Evidence or PR URL <input type="url" name="reference"></label>
+      <label>Description <textarea name="description" maxlength="8000"></textarea></label>
+      <button class="btn">Create work item</button>
+    </form>
+  </details>{% endif %}
+  {% set filtered = [] %}
+  {% for item in work if (not selected_status or item.status == selected_status) and (not selected_kind or item.kind == selected_kind) and (not selected_milestone or item.milestone_id == selected_milestone) %}
+    {% set _ = filtered.append(item) %}
+  {% endfor %}
+  {% if view == 'board' and filtered %}
+    <div class="grid">{% for status in statuses %}<section><h3>{{ status|replace('-', ' ')|capitalize }}</h3>
+      {% for item in filtered if item.status == status %}{{ work_card(item) }}{% else %}<p class="muted">No work items.</p>{% endfor %}
+    </section>{% endfor %}</div>
+  {% else %}{% for item in filtered %}{{ work_card(item) }}{% else %}<p class="card">No work items match these filters.</p>{% endfor %}{% endif %}
+{% elif tab == 'milestones' %}
+  <h2>Milestones</h2>
+  {% if role == 'lead' %}<form class="card row" method="post" action="/delivery/{{ project.id }}/milestones">
+    {{ csrf() }}<label>Title <input name="title" maxlength="160" required></label><label>Due date <input type="date" name="due_on"></label><button class="btn">Create milestone</button>
+  </form>{% endif %}
+  {% for entry in milestones %}<section class="card"><h3>{{ entry.title }}</h3><p>{{ entry.due_on or 'No due date' }}</p><a href="?tab=work&amp;milestone={{ entry.id }}">View work for {{ entry.title }}</a></section>
+  {% else %}<p class="card">No milestones yet.</p>{% endfor %}
+{% elif tab == 'releases' %}
+  <h2>Release candidates</h2>
+  {% if user.auth_source != 'external' and role in ('lead','contributor') and milestones %}
+  <details class="card"><summary>New release candidate</summary>
+    <form class="row" method="post" action="/delivery/{{ project.id }}/releases">
+      {{ csrf() }}<label>Title <input name="title" maxlength="160" required></label>
+      <label>Milestone <select name="milestone">{% for entry in milestones %}<option value="{{ entry.id }}">{{ entry.title }}</option>{% endfor %}</select></label>
+      <label>GitHub commit SHA <input name="commit" maxlength="40" required></label>
+      <label>Image digest <input name="digest" maxlength="71" placeholder="sha256:…" required></label>
+      <label>GitHub Actions run URL <input type="url" name="ci_url" required></label>
+      <label>Test evidence URL <input type="url" name="evidence" required></label>
+      <button class="btn">Create candidate</button>
+    </form>
+  </details>{% endif %}
+  {% for release in releases %}
+  <section class="card">
+    <h3>#{{ release.id }} {{ release.title }}</h3>
+    <p>Commit <code>{{ release.commit_sha }}</code><br>Artifact <code>{{ release.digest }}</code></p>
+    <p><a href="?tab=work&amp;kind=test&amp;milestone={{ release.milestone_id }}">Milestone test cases</a></p>
+    {% if user.auth_source != 'external' %}<p><a href="{{ release.ci_url }}" rel="noreferrer">GitHub Actions run</a> · <a href="{{ release.evidence_url }}" rel="noreferrer">Test evidence</a></p>{% endif %}
+    {% if release.blockers %}<ul>{% for blocker in release.blockers %}<li>{{ blocker }}</li>{% endfor %}</ul>{% else %}<p>Human approvals complete. Staging verifies the artifact and workflow again.</p>{% endif %}
+    {% if user.auth_source != 'external' %}{% for review in release.reviews %}<p class="sdlc-text">{{ review.kind|upper }} · {{ 'Approved' if review.approved else 'Revoked' }} by {{ review.actor }} · {{ review.note }}</p>{% endfor %}{% endif %}
+    {% if release.deployments %}<details><summary>Staging deployments</summary><ul>
+      {% for deployment in release.deployments %}<li>{{ deployment.consumed_at|ts }} · {{ 'Rollback' if deployment.rollback else 'Deployment' }} · {{ deployment.outcome or 'Outcome not reported' }} (run {{ deployment.run_id }}, attempt {{ deployment.attempt }})</li>{% endfor %}
+    </ul></details>{% endif %}
+    {% if role in ('qa','release') and release.created_by != user.username %}
+    <form class="row" method="post" action="/delivery/{{ project.id }}/releases/{{ release.id }}/review">
+      {{ csrf() }}<label>Decision for #{{ release.id }} <select name="decision"><option value="approve">Approve</option><option value="revoke">Revoke approval</option></select></label>
+      <label>Review note <textarea name="note" maxlength="2000" required></textarea></label><button class="btn">Record decision</button>
+    </form>{% endif %}
+  </section>
+  {% else %}<p class="card">No release candidates yet.</p>{% endfor %}
+{% elif tab == 'people' %}
+  <h2>Internal members</h2>
+  <p>Manage membership from <a href="/projects">Projects</a>. Members start with read access.</p>
+  {% for member in members if member.username != project.owner %}
+  <form class="card row" method="post" action="/delivery/{{ project.id }}/roles">
+    {{ csrf() }}<input type="hidden" name="username" value="{{ member.username }}">
+    <label>Role for {{ member.username }} <select name="role">{% for option in internal_roles %}<option{% if option == member.role %} selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    <button class="btn light">Update role</button>
+  </form>{% endfor %}
+  <h2>External collaborators</h2>
+  <form class="card row" method="post" action="/delivery/{{ project.id }}/invitations">
+    {{ csrf() }}<label>Verified email <input name="email" type="email" maxlength="254" required></label>
+    <label>Role <select name="role">{% for option in external_roles %}<option{% if option == 'reader' %} selected{% endif %}>{{ option }}</option>{% endfor %}</select></label>
+    <button class="btn">Create invitation code</button>
+  </form>
+  {% for entry in pending %}
+  <form class="card row" method="post" action="/delivery/{{ project.id }}/invitations/{{ entry.token_hash }}/revoke">
+    {{ csrf() }}<p>{{ entry.email }} · invitation expires {{ entry.expires_at|ts }}</p>
+    <button class="btn light" data-confirm="Revoke the invitation for {{ entry.email }}?">Revoke invitation</button>
+  </form>
+  {% endfor %}
+  {% for member in external %}
+    <section class="card"><h3>{{ member.email }}</h3><p>{{ member.role }} · {{ 'revoked' if member.revoked_at else 'expired' if member.expires_at <= now else 'active' }} · expiry {{ member.expires_at|ts }}</p>
+    {% if not member.revoked_at %}<form class="row" method="post" action="/delivery/{{ project.id }}/external/{{ member.subject }}">
+      {{ csrf() }}<button class="btn light" name="action" value="renew">Renew 30 days</button>
+      <button class="btn red" name="action" value="revoke" data-confirm="Revoke project access for {{ member.email }}?">Revoke access</button>
+    </form>{% endif %}</section>
+  {% endfor %}
+{% endif %}
+{% endblock %}

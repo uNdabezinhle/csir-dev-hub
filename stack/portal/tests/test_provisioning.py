@@ -1,6 +1,7 @@
 import hashlib
 import json
 import os
+import re
 import shutil
 import tempfile
 import time
@@ -8,8 +9,13 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from contextlib import ExitStack
+from types import SimpleNamespace
 from unittest.mock import patch
+from urllib.parse import parse_qs, urlsplit
 
+import httpx
+import jwt
+from cryptography.hazmat.primitives.asymmetric import rsa
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -23,7 +29,7 @@ if not (_config / "roles.json").exists():
 os.environ["PORTAL_CONFIG_DIR"] = str(_config)
 os.environ["PORTAL_DATA_DIR"] = str(Path(_sandbox.name) / "data")
 
-from app import blueprints, browser_security, coder, db, execution_records, main, provisioning, reclaim
+from app import blueprints, browser_security, coder, db, execution_records, main, provisioning, reclaim, sdlc_gate, sdlc_identity, sdlc_store
 from app.engine_broker import app as broker
 from app.extensions.licence import LicenseBroker
 from app.extensions.scanner import ImageScanner
@@ -176,6 +182,22 @@ class BrokerTests(unittest.TestCase):
 
 
 class ControlTests(unittest.TestCase):
+    def test_pinned_image_requires_matching_local_image_and_active_approval(self):
+        db.init()
+        row = db.one("SELECT data,published FROM catalog WHERE template='ubuntu-server-pilot'")
+        self.assertEqual(row["published"], 0)
+        pilot = json.loads(row["data"])
+        scanner = main.ext("scanner")
+        with patch.object(scanner, "image_id", return_value="sha256:moved") as image:
+            self.assertIn("pinned image ID", main.catalog_image_blockers(pilot)[0])
+            image.return_value = pilot["pinned_image_id"]
+            with patch.object(scanner, "approval", return_value=None) as approval:
+                self.assertIn("publisher approval", main.catalog_image_blockers(pilot)[0])
+                approval.return_value = {"decision": "approved"}
+                with patch.object(scanner, "gate", return_value=[]) as gate:
+                    self.assertEqual(main.catalog_image_blockers(pilot), [])
+                    gate.assert_called_once_with(pilot["image"])
+
     def test_execution_record_validation_and_comparison(self):
         record = pilot_receipt()
         self.assertEqual(execution_records.parse(json.dumps(record).encode(), "a" * 40), record)
@@ -373,3 +395,198 @@ class ControlTests(unittest.TestCase):
                 main.reconcile()
         self.assertEqual(main.RECONCILE_OK._value.get(), 0)
         self.assertEqual(main.RECONCILE_LAST_SUCCESS._value.get(), last)
+
+
+class SdlcTests(unittest.TestCase):
+    def setUp(self):
+        db.init()
+        with db.tx() as conn:
+            self.pid = conn.execute("INSERT INTO projects(name,owner) VALUES (?,?)",
+                                    (self._testMethodName, "delivery-lead")).lastrowid
+            self.other = conn.execute("INSERT INTO projects(name,owner) VALUES (?,?)",
+                                      (self._testMethodName + "-other", "other-lead")).lastrowid
+            for username, role in (("delivery-qa", "qa"), ("delivery-release", "release")):
+                conn.execute("INSERT OR IGNORE INTO users(username,auth_source,roles) VALUES (?,'local','[]')", (username,))
+                conn.execute("INSERT INTO project_members VALUES (?,?)", (self.pid, username))
+                conn.execute("INSERT INTO sdlc_roles VALUES (?,?,?)", (self.pid, username, role))
+        env = patch.dict(os.environ, {
+            "DEVHUB_SDLC_ENABLED": "true", "SDLC_PILOT_PROJECT_IDS": str(self.pid),
+            "SDLC_GITHUB_REPOSITORY": "example/devhub", "SDLC_GITHUB_REPOSITORY_ID": "123",
+            "SDLC_STAGING_PROJECT_ID": str(self.pid), "SDLC_STAGING_IMAGE": "ghcr.io/example/devhub/portal",
+        })
+        env.start()
+        self.addCleanup(env.stop)
+        self.client = TestClient(main.app)
+        self.headers = {"X-CSRF-Token": self.client.get("/api/csrf").json()["token"]}
+        self.prefix = f"/delivery/{self.pid}"
+        self.actor = patch.object(main.auth, "current_user", return_value=self.user("delivery-lead"))
+        self.current_user = self.actor.start()
+        self.addCleanup(self.actor.stop)
+
+    def user(self, name):
+        return {"username": name, "full_name": name, "auth_source": "local", "roles": []}
+
+    def post(self, suffix, data):
+        return self.client.post(self.prefix + suffix, data=data, headers=self.headers, follow_redirects=False)
+
+    def test_project_work_and_role_isolation(self):
+        self.assertEqual(self.client.get(self.prefix).status_code, 200)
+        self.assertEqual(self.client.get(f"/delivery/{self.other}").status_code, 404)
+        self.assertEqual(self.post("/milestones", {"title": "Pilot", "due_on": "2026-12-08"}).status_code, 303)
+        milestone = db.one("SELECT id FROM sdlc_milestones WHERE project_id=?", (self.pid,))["id"]
+        self.assertEqual(self.post("/work", {"title": "Requirement", "kind": "requirement", "milestone": milestone}).status_code, 303)
+        self.assertEqual(self.post("/work/1/status", {"status": "in-progress"}).status_code, 303)
+        self.assertEqual(self.post("/work/1/comments", {"body": "Reviewed the scope."}).status_code, 303)
+        board = self.client.get(self.prefix + "?tab=work&view=board&milestone=")
+        self.assertEqual(board.status_code, 200)
+        self.assertIn("Reviewed the scope.", board.text)
+        self.current_user.return_value = self.user("delivery-qa")
+        self.assertEqual(self.post("/roles", {"username": "delivery-qa", "role": "lead"}).status_code, 403)
+        self.assertEqual(self.client.get(self.prefix + "?tab=people").status_code, 403)
+        self.current_user.return_value = self.user("outsider")
+        self.assertEqual(self.client.get(self.prefix + "?tab=work").status_code, 404)
+
+    def test_gate_verifies_signed_workflow_identity(self):
+        now = int(time.time())
+        claims = {"iss": sdlc_gate.ISSUER, "aud": sdlc_gate.AUDIENCE, "iat": now, "nbf": now, "exp": now + 60,
+                  "sub": "repo:example/devhub:environment:staging",
+                  "repository": "example/devhub", "repository_id": "123", "ref": "refs/heads/main",
+                  "environment": "staging", "runner_environment": "self-hosted", "event_name": "workflow_dispatch",
+                  "workflow_ref": "example/devhub/.github/workflows/deploy-staging.yml@refs/heads/main",
+                  "run_id": "10", "run_attempt": "1", "sha": "a" * 40}
+        signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        url = "/api/sdlc/automation/permit"
+        payload = {"release_id": 99999, "digest": "sha256:" + "b" * 64}
+        with patch.object(sdlc_gate, "github_keys") as keys:
+            keys.return_value.get_signing_key_from_jwt.return_value = SimpleNamespace(key=signing_key.public_key())
+            for overrides, expected in (
+                ({}, 404),
+                ({"aud": "other"}, 401),
+                ({"exp": now - 1}, 401),
+                ({"sub": "repo:example/devhub:ref:refs/heads/main"}, 403),
+                ({"repository_id": "321"}, 403),
+                ({"workflow_ref": "other.yml"}, 403),
+                ({"environment": "production"}, 403),
+                ({"ref": "refs/heads/branch"}, 403),
+                ({"runner_environment": "github-hosted"}, 403),
+            ):
+                with self.subTest(overrides=overrides):
+                    token = jwt.encode({**claims, **overrides}, signing_key, algorithm="RS256")
+                    response = self.client.post(url, json=payload, headers={"Authorization": f"Bearer {token}"})
+                    self.assertEqual(response.status_code, expected, response.text)
+
+    def test_external_callback_establishes_project_only_session(self):
+        issuer = "https://identity.example.test/realms/collaborators"
+        client_id = "external-client"
+        callback = "/delivery/external/callback"
+        external = TestClient(main.app, base_url="https://portal.example.test")
+        config = (issuer, client_id, "fixture-secret", "2", str(external.base_url) + callback)
+        email = "collaborator@example.test"
+        signing_key = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        with patch.object(sdlc_identity, "settings", return_value=config):
+            invitation = self.post("/invitations", {"email": email, "role": "commenter"})
+            self.assertEqual(invitation.status_code, 200, invitation.text)
+            code = re.search(r"<code>([A-Za-z0-9_-]{43})</code>", invitation.text).group(1)
+            self.current_user.return_value = None
+            for valid in (False, True):
+                headers = {"X-CSRF-Token": external.get("/api/csrf").json()["token"]}
+                start = external.post("/delivery/external", data={"code": code}, headers=headers, follow_redirects=False)
+                self.assertEqual(start.status_code, 303, start.text)
+                query = parse_qs(urlsplit(start.headers["location"]).query)
+                now = int(time.time())
+                claims = {"iss": issuer, "aud": client_id, "sub": "fixture-collaborator",
+                          "iat": now, "exp": now + 60, "nonce": query["nonce"][0] if valid else "wrong-nonce",
+                          "acr": "2", "email": email, "email_verified": True}
+                token = jwt.encode(claims, signing_key, algorithm="RS256")
+                token_url = issuer + "/protocol/openid-connect/token"
+                exchange = httpx.Response(200, json={"id_token": token}, request=httpx.Request("POST", token_url))
+                params = {"code": "provider-code", "state": query["state"][0]}
+                with patch.object(sdlc_identity.httpx, "post", return_value=exchange), patch.object(sdlc_identity, "jwks") as keys:
+                    keys.return_value.get_signing_key_from_jwt.return_value = SimpleNamespace(key=signing_key.public_key())
+                    result = external.get(callback, params=params, follow_redirects=False)
+                self.assertEqual(result.status_code, 303 if valid else 403, result.text)
+
+            self.assertEqual(result.headers["location"], "/delivery/external/projects")
+            self.assertEqual(external.get(callback, params=params).status_code, 403)
+            self.assertIn(self._testMethodName, external.get(result.headers["location"]).text)
+            self.assertEqual(external.get(self.prefix + "?tab=work").status_code, 200)
+            self.assertEqual(external.get(f"/delivery/{self.other}").status_code, 404)
+            self.assertEqual(external.get("/", follow_redirects=False).headers["location"], "/login")
+            principal = db.one("SELECT subject FROM sdlc_external WHERE project_id=?", (self.pid,))["subject"]
+            self.current_user.return_value = self.user("delivery-lead")
+            self.assertEqual(self.post(f"/external/{principal}", {"action": "revoke"}).status_code, 303)
+            self.current_user.return_value = None
+            self.assertEqual(external.get(self.prefix).status_code, 404)
+
+    def test_invitation_identity_expiry_revocation_and_single_use(self):
+        issuer = "https://identity.example.test/realms/collaborators"
+        code = "test-code"
+        with db.tx() as conn:
+            conn.execute("INSERT INTO sdlc_invitations VALUES (?,?,?,?,?,NULL,NULL)",
+                         (sdlc_identity.digest(code), self.pid, "collaborator@example.test", "commenter", time.time() + 60))
+        claims = {"iss": issuer, "sub": "external-id", "email": "COLLABORATOR@example.test", "email_verified": True, "acr": "2"}
+        with self.assertRaises(main.HTTPException):
+            sdlc_identity.accept_identity({**claims, "acr": "1"}, issuer, "2", sdlc_identity.digest(code))
+        with self.assertRaises(main.HTTPException):
+            sdlc_identity.accept_identity({**claims, "email": "someone@example.test"}, issuer, "2", sdlc_identity.digest(code))
+        principal = sdlc_identity.accept_identity(claims, issuer, "2", sdlc_identity.digest(code))
+        self.assertEqual(sdlc_store.external_membership(self.pid, principal)["role"], "commenter")
+        self.assertIsNone(sdlc_store.external_membership(self.pid, principal, time.time() + 31 * 86400))
+        self.assertIsNone(sdlc_store.external_membership(self.other, principal))
+        with self.assertRaises(main.HTTPException):
+            sdlc_identity.accept_identity(claims, issuer, "2", sdlc_identity.digest(code))
+        self.assertEqual(self.post(f"/external/{principal}", {"action": "revoke"}).status_code, 303)
+        self.assertIsNone(sdlc_store.external_membership(self.pid, principal))
+
+    def test_staging_denies_missing_revoked_changed_and_replayed_approval(self):
+        self.post("/milestones", {"title": "Release"})
+        milestone = db.one("SELECT id FROM sdlc_milestones WHERE project_id=?", (self.pid,))["id"]
+        commit, digest = "a" * 40, "sha256:" + "b" * 64
+        self.post("/work", {"title": "Test", "kind": "test", "milestone": milestone,
+                            "reference": "https://example.test/evidence"})
+        self.post("/work/1/status", {"status": "done"})
+        self.assertEqual(self.post("/releases", {"title": "Candidate", "milestone": milestone, "commit": commit,
+            "digest": digest, "ci_url": "https://github.com/example/devhub/actions/runs/123",
+            "evidence": "https://example.test/test-evidence"}).status_code, 303)
+        release = db.one("SELECT id FROM sdlc_releases WHERE project_id=?", (self.pid,))["id"]
+        review = f"/releases/{release}/review"
+        self.assertEqual(self.post(review, {"decision": "approve", "note": "Self approval"}).status_code, 403)
+        base = "/api/sdlc/automation"
+        payload = {"release_id": release, "digest": digest}
+        claims = {"run_id": "12", "run_attempt": "1", "sha": commit}
+        with patch.object(sdlc_gate, "authorise", return_value=claims):
+            self.assertEqual(self.client.post(base + "/permit", json=payload).status_code, 409)
+            for actor in ("delivery-qa", "delivery-release"):
+                self.current_user.return_value = self.user(actor)
+                self.assertEqual(self.post(review, {"decision": "approve", "note": "Evidence checked"}).status_code, 303)
+            self.assertEqual(self.client.post(base + "/permit", json={**payload, "digest": "sha256:" + "c" * 64}).status_code, 409)
+            permit = self.client.post(base + "/permit", json=payload).json()["permit"]
+            self.current_user.return_value = self.user("delivery-release")
+            self.post(review, {"decision": "revoke", "note": "Hold"})
+            self.assertEqual(self.client.post(base + "/consume", json={**payload, "permit": permit}).status_code, 409)
+            self.post(review, {"decision": "approve", "note": "Cleared"})
+            self.current_user.return_value = self.user("delivery-lead")
+            self.assertEqual(self.post("/releases", {"title": "Alternate", "milestone": milestone, "commit": commit,
+                "digest": digest, "ci_url": "https://github.com/example/devhub/actions/runs/123",
+                "evidence": "https://example.test/test-evidence"}).status_code, 303)
+            alternate = db.one("SELECT id FROM sdlc_releases WHERE project_id=? AND title='Alternate'", (self.pid,))["id"]
+            for actor in ("delivery-qa", "delivery-release"):
+                self.current_user.return_value = self.user(actor)
+                self.assertEqual(self.post(f"/releases/{alternate}/review", {"decision": "approve", "note": "Evidence checked"}).status_code, 303)
+            alternate_payload = {**payload, "release_id": alternate}
+            alternate_response = self.client.post(base + "/permit", json=alternate_payload)
+            self.assertEqual(alternate_response.status_code, 200, alternate_response.text)
+            self.assertEqual(self.client.post(base + "/consume", json={**payload, "permit": permit}).status_code, 200)
+            self.assertEqual(self.client.post(base + "/consume", json={**payload, "permit": permit}).status_code, 409)
+            self.assertEqual(self.client.post(base + "/consume", json={
+                **alternate_payload, "permit": alternate_response.json()["permit"]
+            }).status_code, 409)
+            self.assertEqual(self.client.post(base + "/permit", json=alternate_payload).status_code, 409)
+            self.assertEqual(self.client.post(base + "/outcome", json={**payload, "permit": permit, "outcome": "succeeded"}).status_code, 200)
+            claims.update({"run_id": "13", "sha": "c" * 40})
+            self.assertEqual(self.client.post(base + "/permit", json=payload).status_code, 409)
+            self.assertEqual(self.client.post(base + "/permit", json={**payload, "rollback": True}).status_code, 200)
+            with db.tx() as conn:
+                conn.execute("UPDATE sdlc_work SET reference_url='https://example.test/new' WHERE project_id=? AND number=1", (self.pid,))
+            self.assertEqual(self.client.post(base + "/permit", json={**payload, "rollback": True}).status_code, 409)
+        self.assertEqual(self.client.post(base + "/permit", json=payload).status_code, 401)

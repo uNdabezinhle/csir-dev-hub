@@ -1,0 +1,9 @@
+{% extends "base.html" %}
+{% from "components.html" import page_heading %}
+{% block title %}Project request error · CSIR Dev Hub{% endblock %}
+{% block body %}
+{{ page_heading('Project request could not be completed') }}
+<p class="flash err" role="alert">{{ message }}</p>
+<p>Use your browser’s Back button to review the form, or return to <a href="/projects">Projects</a>.</p>
+<p><a href="/delivery/external/projects">External collaborator projects</a></p>
+{% endblock %}

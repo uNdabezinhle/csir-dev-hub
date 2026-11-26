@@ -1,0 +1,43 @@
+name: Deploy Dev Hub staging
+on:
+  workflow_dispatch:
+    inputs:
+      release_id:
+        description: Dev Hub release candidate number
+        required: true
+        type: string
+      digest:
+        description: Approved sha256 artifact digest
+        required: true
+        type: string
+      rollback:
+        description: Restore a previously deployed staging candidate
+        required: false
+        default: false
+        type: boolean
+permissions:
+  contents: read
+  packages: read
+  id-token: write
+concurrency:
+  group: devhub-staging
+  cancel-in-progress: false
+jobs:
+  deploy:
+    if: github.ref == 'refs/heads/main'
+    runs-on: [self-hosted, linux, devhub-staging]
+    environment: staging
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - name: Deploy the approved digest
+        env:
+          DEVHUB_GATE_URL: ${{ vars.DEVHUB_GATE_URL }}
+          DEVHUB_STAGING_COMPOSE_FILE: ${{ vars.DEVHUB_STAGING_COMPOSE_FILE }}
+          DEVHUB_STAGING_RELEASE: ${{ inputs.release_id }}
+          DEVHUB_STAGING_DIGEST: ${{ inputs.digest }}
+          DEVHUB_STAGING_ROLLBACK: ${{ inputs.rollback }}
+          GHCR_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python3 scripts/sdlc-staging-deploy.py

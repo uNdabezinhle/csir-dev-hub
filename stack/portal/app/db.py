@@ -76,6 +76,8 @@ def one(sql, args=()):
 def init():
     with tx() as c:
         c.executescript(SCHEMA)
+        from . import sdlc_store
+        sdlc_store.init(c)
         c.execute("BEGIN IMMEDIATE")
         if "request_id" not in {row[1] for row in c.execute("PRAGMA table_info(workspace_requests)")}:
             c.execute("ALTER TABLE workspace_requests ADD COLUMN request_id TEXT")

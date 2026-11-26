@@ -50,6 +50,13 @@ jobs:
             terraform -chdir="$d" validate
             echo "::endgroup::"
           done
+      - name: Validate composed Python pilot template
+        run: |
+          stage=$(mktemp -d)
+          cp templates/ubuntu-server/*.tf "$stage/"
+          cp templates/ubuntu-server-pilot/pilot.auto.tfvars.json "$stage/"
+          terraform -chdir="$stage" init -backend=false -input=false
+          terraform -chdir="$stage" validate
 
   lint-dockerfiles:
     name: Hadolint (advisory)
@@ -80,6 +87,8 @@ jobs:
       - name: Portal behavioral tests
         working-directory: stack/portal
         run: python -m unittest discover -s tests -v
+      - name: Staging runner guard tests
+        run: python scripts/test-sdlc-staging-deploy.py -v
       - name: Research pilot reproducibility
         run: |
           python -m unittest discover -s pilots/research-usage -p 'test_*.py' -v

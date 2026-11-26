@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% from "components.html" import csrf, page_heading with context %}
+{% block title %}External collaboration · CSIR Dev Hub{% endblock %}
+{% block body %}
+{{ page_heading('External collaboration') }}
+{% if created_code %}
+  <div class="card">
+    <p>Copy this single-use invitation code and share it privately with the recipient. It expires after 7 days.</p>
+    <p><code>{{ created_code }}</code></p>
+    <p>Recipients enter the code on the <a href="/delivery/external">external sign-in page</a>.</p>
+    <p><a href="/delivery/{{ project_id }}?tab=people">Return to People</a></p>
+  </div>
+{% elif external_session %}
+  <div class="card">
+  <h2>Your projects</h2>
+  <ul>{% for project in projects %}<li><a href="/delivery/{{ project.id }}">{{ project.name }}</a> · {{ project.role }} · expires {{ project.expires_at|ts }}</li>
+  {% else %}<li>You have no active project access.</li>{% endfor %}</ul>
+  <form method="post" action="/delivery/external/sign-out">{{ csrf() }}<button class="btn light">Sign out</button></form>
+  </div>
+{% elif configured %}
+<form class="card" method="post" action="/delivery/external">
+  {{ csrf() }}
+  <label>Invitation code for new collaborators <input name="code" autocomplete="off" maxlength="43"></label>
+  <p>Returning collaborators can leave the code blank. Sign in with the verified email on your invitation.</p>
+  <button class="btn">Continue to Keycloak</button>
+</form>
+{% else %}<p class="card">External sign-in is unavailable. Contact the project lead.</p>{% endif %}
+{% endblock %}

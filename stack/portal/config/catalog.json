@@ -24,6 +24,22 @@
    "image": "csir-devhub/ubuntu-server:24.04"
   },
   {
+   "template": "ubuntu-server-pilot",
+   "display_name": "Ubuntu Server (Python research pilot)",
+   "os": "Ubuntu 24.04 LTS",
+   "kind": "container",
+   "description": "Versioned Ubuntu workspace for the Python and Git research pilot, with VS Code and no native compiler toolchain.",
+   "profiles": ["dev", "isolated"],
+   "default_cpu": 2,
+   "default_mem": 2,
+   "published": false,
+   "params": {"ubuntu_version": "24.04"},
+   "access": ["vscode", "ssh"],
+   "min_role": "engineer",
+   "image": "csir-devhub/ubuntu-server:pilot-python-candidate-20261126",
+   "pinned_image_id": "sha256:e4120310db5f18d3a5b07147d153be6d7acd55b91bd50b6f5935cc4a09e11096"
+  },
+  {
    "template": "ubuntu-desktop",
    "display_name": "Ubuntu Desktop (XFCE + RDP)",
    "os": "Ubuntu 24.04 LTS",

@@ -57,8 +57,12 @@ def need(request, perm=None):
 
 # Phase 2 routes (licences, image scans, billing, KVM) are registered BEFORE the generic /admin/images/{template}
 # route below, otherwise "/admin/images/scan" would be captured as template="scan".
-from . import phase2  # noqa: E402
+from . import phase2, sdlc, sdlc_gate, sdlc_identity, sdlc_store  # noqa: E402
 phase2.register(app, need, render, flash, ip)
+sdlc_identity.register(app, render, flash, ip)
+sdlc.register(app, render, flash, ip)
+app.mount("/api/sdlc/automation", sdlc_gate.app())
+tpl.env.globals.update(sdlc_project_enabled=sdlc_store.project_enabled, sdlc_enabled=sdlc_store.enabled)
 
 # ------------------------------------------------------------------ startup
 @app.on_event("startup")
@@ -163,6 +167,7 @@ def oidc_callback(request: Request, code: str = "", state: str = "", error: str 
     return RedirectResponse("/", 303)
 
 def _after_login(request, username, email, name, roles, source, password=None):
+    request.session.pop("external_sdlc", None)
     request.session["user"] = username
     with db.tx() as c: c.execute("UPDATE users SET last_login=? WHERE username=?", (time.time(), username))
     detail = {"roles": roles, "source": source}
@@ -195,6 +200,20 @@ def catalog_items(user, include_unpublished=False):
 def allowed_profiles(user, item):
     return [p for p in item["profiles"] if set(user["roles"]) & set(POLICY["network_profiles"][p]["roles"]) or rbac.can(user, "*")]
 
+
+def catalog_image_blockers(item):
+    scanner = ext("scanner")
+    image = item["image"]
+    pinned = item.get("pinned_image_id")
+    if pinned:
+        if scanner.image_id(image) != pinned:
+            return ["Local image is missing or does not match the template's pinned image ID"]
+        approval = scanner.approval(image, pinned)
+        if not approval or approval["decision"] != "approved":
+            return ["The pinned image must have an active publisher approval"]
+    return scanner.gate(image)
+
+
 def enrich(ws, ledger):
     l = ledger.get(ws["id"], {}); st = coder.ws_status(ws)
     item = next((json.loads(r["data"]) for r in db.q("SELECT data FROM catalog WHERE template=?", (ws["template_name"],))), {})
@@ -224,7 +243,8 @@ def home(request: Request):
     except Exception as e: mine, err = [], str(e)
     q = quotas.effective_quota(u); us = quotas.usage(quotas.ledger(owner=u["username"]))
     return render(request, "home.html", u, workspaces=mine, quota=q, usage=us, error=err,
-                  catalog=[dict(i, allowed=allowed_profiles(u, i)) for i in catalog_items(u)],
+                  catalog=[dict(i, allowed=allowed_profiles(u, i)) for i in catalog_items(u)
+                           if i["published"] or not i.get("pinned_image_id")],
                   projects=user_projects(u), rates=quotas.unit_rates())
 
 @app.post("/workspaces")
@@ -249,7 +269,8 @@ def create_ws(request: Request, template: str = Form(...), name: str = Form(...)
         ubuntu_version = spec["ubuntu_version"]
         ide = spec["ide"]
     item = next((i for i in catalog_items(u) if i["template"] == template), None)
-    if not item: return deny("catalog", f"Template '{template}' is not in the published catalog")
+    if not item or (item.get("pinned_image_id") and not item["published"]):
+        return deny("catalog", f"Template '{template}' is not in the published catalog")
     if item.get("min_role") == "engineer" and set(u["roles"]) <= {"guest", "auditor"}: return deny("role", f"{item['display_name']} is not available to your role")
     if profile not in allowed_profiles(u, item): return deny("profile", f"Network profile '{profile}' not allowed for you on this template")
     if "guest" in u["roles"] and len(u["roles"]) == 1:
@@ -262,11 +283,11 @@ def create_ws(request: Request, template: str = Form(...), name: str = Form(...)
     if project_id and not project: return deny("project", "Project does not exist")
     if project and project["id"] not in [p["id"] for p in user_projects(u)]: return deny("project", "You are not a member of that project")
     from .extensions.scanner import policy as scan_policy
-    gate = ext("scanner").gate(item.get("image")) if item.get("image") and scan_policy().get("enforce_on_create") else []
     if blueprint:
         if item.get("image") != spec["catalog_image"] or ext("scanner").image_id(spec["catalog_image"]) != spec["catalog_image_id"]:
             return deny("image", "The blueprint image changed or is unavailable. Ask the project owner for a new blueprint.")
-        gate = ext("scanner").gate(spec["catalog_image"])
+    must_check_image = blueprint is not None or item.get("pinned_image_id") or scan_policy().get("enforce_on_create")
+    gate = catalog_image_blockers(item) if item.get("image") and must_check_image else []
     if gate: return deny("image", "Image not approved: " + "; ".join(gate))
     owner = u["username"]
     request_id = uuid4().hex
@@ -432,7 +453,8 @@ def project_blueprints(request: Request, pid: int, blueprint: int | None = None)
         recipe["comparison"] = execution_records.comparison(recipe["records"])
     can_manage = rbac.can(user, "*") or (rbac.can(user, "projects.manage") and project["owner"] == user["username"])
     options = [dict(item, allowed=allowed_profiles(user, item)) for item in catalog_items(user)
-               if item.get("kind") == "container" and item.get("image")]
+               if item.get("kind") == "container" and item.get("image")
+               and (item["published"] or not item.get("pinned_image_id"))]
     may_request = rbac.can(user, "workspace.own") and any(p["id"] == pid for p in user_projects(user))
     may_review = rbac.can(user, "*")
     requests = db.q("""SELECT * FROM project_requests WHERE project_id=? AND (? OR requested_by=?)
@@ -453,7 +475,8 @@ def save_blueprint(request: Request, pid: int, name: str = Form(...), repository
     try:
         repository, revision = blueprints.parse_source(repository, revision)
         item = next((i for i in catalog_items(user) if i["template"] == template), None)
-        if not item or item.get("kind") != "container" or not item.get("image") or profile not in allowed_profiles(user, item):
+        if (not item or item.get("kind") != "container" or not item.get("image")
+                or (item.get("pinned_image_id") and not item["published"]) or profile not in allowed_profiles(user, item)):
             raise ValueError("Choose an eligible container template and network profile")
         if cpu < 1 or memory < 1:
             raise ValueError("CPU and memory must be positive")
@@ -465,7 +488,7 @@ def save_blueprint(request: Request, pid: int, name: str = Form(...), repository
             raise ValueError("Republish the current Dev Hub template before creating blueprints")
         image = item["image"]
         image_id = ext("scanner").image_id(image)
-        gate = ext("scanner").gate(image)
+        gate = catalog_image_blockers(item)
         if not image_id or gate:
             raise ValueError("The catalog image is unavailable or blocked by image policy")
         spec = {"repository": repository, "revision": revision, "template": template, "profile": profile,
@@ -603,7 +626,11 @@ def projects_member(request: Request, pid: int, username: str = Form(...), op: s
     if not p or not (rbac.can(u, "*") or p["owner"] == u["username"]): raise HTTPException(403)
     with db.tx() as c:
         if op == "add": c.execute("INSERT OR IGNORE INTO project_members VALUES (?,?)", (pid, username))
-        else: c.execute("DELETE FROM project_members WHERE project_id=? AND username=?", (pid, username))
+        elif op == "remove":
+            c.execute("DELETE FROM project_members WHERE project_id=? AND username=?", (pid, username))
+            c.execute("DELETE FROM sdlc_roles WHERE project_id=? AND username=?", (pid, username))
+        else:
+            raise HTTPException(422, "Choose add or remove")
     audit.log(u["username"], f"project.member.{op}", f"{p['name']}:{username}", ip=ip(request))
     return RedirectResponse("/projects", 303)
 
@@ -708,8 +735,8 @@ def admin_image_update(request: Request, template: str, published: int = Form(0)
     d = json.loads(r["data"]); d.update(default_cpu=default_cpu, default_mem=default_mem, description=description or d["description"])
     if published and not coder.template_by_name(template):
         flash(request, f"Cannot publish '{template}': no Coder template with that name has been pushed yet", "err"); return RedirectResponse("/admin/images", 303)
-    if published and not r["published"] and d.get("image"):
-        blockers = ext("scanner").gate(d["image"])
+    if published and d.get("image") and (not r["published"] or d.get("pinned_image_id")):
+        blockers = catalog_image_blockers(d)
         if blockers:
             audit.log(u["username"], "catalog.publish", template, {"blocked": blockers}, ip(request), "denied")
             flash(request, f"Cannot publish '{template}': " + "; ".join(blockers), "err"); return RedirectResponse("/admin/images", 303)

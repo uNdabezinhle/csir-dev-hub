@@ -9,6 +9,17 @@ terraform {
 provider "docker" {}
 provider "coder" {}
 
+variable "workspace_image_id" {
+  description = "Optional Docker image ID pinned by the template publisher."
+  type        = string
+  default     = null
+
+  validation {
+    condition     = var.workspace_image_id == null || can(regex("^sha256:[a-f0-9]{64}$", var.workspace_image_id))
+    error_message = "The workspace image ID must be a sha256 Docker image ID."
+  }
+}
+
 data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
@@ -26,16 +37,19 @@ data "coder_parameter" "devhub_request_id" {
 data "coder_parameter" "ubuntu_version" {
   name         = "ubuntu_version"
   display_name = "Ubuntu release"
-  description  = "26.04 LTS preferred, 24.04 LTS fallback"
+  description  = var.workspace_image_id == null ? "26.04 LTS preferred, 24.04 LTS fallback" : "Ubuntu 24.04 LTS pinned for this pilot."
   default      = "24.04"
   mutable      = false
   option {
     name  = "Ubuntu 24.04 LTS (Noble)"
     value = "24.04"
   }
-  option {
-    name  = "Ubuntu 26.04 LTS"
-    value = "26.04"
+  dynamic "option" {
+    for_each = var.workspace_image_id == null ? ["26.04"] : []
+    content {
+      name  = "Ubuntu 26.04 LTS"
+      value = option.value
+    }
   }
 }
 
@@ -97,6 +111,8 @@ data "coder_parameter" "ide" {
 }
 
 locals {
+  workspace_image = coalesce(var.workspace_image_id, "csir-devhub/ubuntu-server:${data.coder_parameter.ubuntu_version.value}")
+
   ide_full   = data.coder_parameter.ide.value == "full"
   username   = data.coder_workspace_owner.me.name
   ws_slug    = lower("${data.coder_workspace_owner.me.name}-${data.coder_workspace.me.name}")
@@ -240,7 +256,7 @@ resource "docker_container" "gateway" {
 # ---------------------------------------------------------------- workspace container
 resource "docker_container" "workspace" {
   count      = data.coder_workspace.me.start_count
-  image      = "csir-devhub/ubuntu-server:${data.coder_parameter.ubuntu_version.value}"
+  image      = local.workspace_image
   name       = "coder-${local.ws_slug}"
   hostname   = data.coder_workspace.me.name
   user       = "coder"
@@ -283,7 +299,7 @@ resource "coder_metadata" "info" {
   resource_id = docker_container.workspace[0].id
   item {
     key   = "image"
-    value = "csir-devhub/ubuntu-server:${data.coder_parameter.ubuntu_version.value}"
+    value = local.workspace_image
   }
   item {
     key   = "network profile"

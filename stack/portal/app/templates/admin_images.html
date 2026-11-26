@@ -2,7 +2,7 @@
 {% from "components.html" import page_heading %}
 {{ page_heading('Images & catalog', 'Review image scans and approvals before publishing templates to the catalog.') }}
 <h2>Workspace catalog</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Workspace catalog"><table><tr><th>Template</th><th>Kind / OS</th><th>Coder template</th><th>Profiles</th><th>Published</th>{% if can(user,'catalog.manage') %}<th>Edit</th>{% endif %}</tr>
-{% for c in catalog %}{% set t = templates.get(c.template) %}<tr><td><b>{{ c.display_name }}</b><br><code>{{ c.template }}</code></td><td>{{ c.kind }}<br>{{ c.os }}</td>
+{% for c in catalog %}{% set t = templates.get(c.template) %}<tr><td><b>{{ c.display_name }}</b><br><code>{{ c.template }}</code>{% if c.pinned_image_id %}<span class="cell-meta">Pinned image <code>{{ c.pinned_image_id }}</code></span>{% endif %}</td><td>{{ c.kind }}<br>{{ c.os }}</td>
 <td>{% if t %}<span class="badge ok">pushed</span> {{ t.active_user_count }} users<br><span class="muted">default TTL {{ (t.default_ttl_ms/3600000)|round(1) }} h</span>{% else %}<span class="badge flag">not pushed</span>{% endif %}</td>
 <td>{% for p in c.profiles %}<span class="badge">{{ p }}</span>{% endfor %}</td><td>{{ 'yes' if c.published else 'no' }}</td>
 {% if can(user,'catalog.manage') %}<td><form method="post" action="/admin/images/{{ c.template }}" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><select name="published"><option value="1" {% if c.published %}selected{% endif %}>published</option><option value="0" {% if not c.published %}selected{% endif %}>hidden</option></select>

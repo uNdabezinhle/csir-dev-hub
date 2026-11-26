@@ -15,5 +15,6 @@
     <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
     <button class="btn {{ 'light' if oidc }}" type="submit">Sign in locally</button>
   </form>
+  {% if sdlc_enabled() %}<p><a href="/delivery/external">External collaborator sign-in</a></p>{% endif %}
 </div>
 {% endblock %}

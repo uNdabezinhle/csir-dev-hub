@@ -2,7 +2,7 @@
 {% from "components.html" import page_heading %}
 {{ page_heading('Projects', 'Review membership, resource usage and estimated costs.') }}
 <div class="card"><label class="table-filter" data-filter-controls hidden>Filter projects <input type="search" data-filter="projects-table-1"></label><div class="table-scroll" tabindex="0" role="region" aria-label="Projects"><table id="projects-table-1"><tr><th>Project</th><th>Owner</th><th>Cost centre</th><th>Members</th><th>Usage / quota</th><th>Est. monthly</th></tr>
-{% for p in projects %}<tr><td><b>{{ p.name }}</b><span class="cell-meta"><a href="/projects/{{ p.id }}/blueprints">Blueprints and requests</a></span></td><td>{{ p.owner }}</td><td>{{ p.cost_centre or '-' }}</td>
+{% for p in projects %}<tr><td><b>{{ p.name }}</b><span class="cell-meta"><a href="/projects/{{ p.id }}/blueprints">Blueprints and requests</a></span>{% if sdlc_project_enabled(p.id) %}<span class="cell-meta"><a href="/delivery/{{ p.id }}">Project delivery</a></span>{% endif %}</td><td>{{ p.owner }}</td><td>{{ p.cost_centre or '-' }}</td>
 <td>{% for m in p.members %}<span class="badge">{{ m }}</span>{% endfor %}
 {% if p.can_manage %}<form class="row" method="post" action="/projects/{{ p.id }}/members" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Member <select name="username">{% for x in users %}<option>{{ x }}</option>{% endfor %}</select></label>
 <label>Action <select name="op"><option value="add">Add</option><option value="remove">Remove</option></select></label><button class="btn sm light" type="submit">Apply</button></form>{% endif %}</td>

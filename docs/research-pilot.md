@@ -18,7 +18,7 @@ checkout, and dataset provenance are outside this first release.
 ## Maintainer pilot
 
 Use the CSIR Dev Hub maintainers as the first pilot team, this repository as the source, and **Ubuntu Server
-24.04** with 2 vCPU and 2 GB RAM as the workspace template. Create a private portal project called
+(Python research pilot)** with 2 vCPU and 2 GB RAM as the workspace template. Create a private portal project called
 `devhub-maintainer-pilot`, with one owner, two distinct maintainer accounts and a separate non-member for the access
 check. Allow two concurrent workspaces in the project quota. Use the `dev` network profile if the verification
 workspace needs it to reach the approved source repository.
@@ -38,10 +38,15 @@ docker build --pull --build-arg UBUNTU_VERSION=24.04 --build-arg WORKSPACE_BUILD
   -t csir-devhub/ubuntu-server:pilot-python-candidate images/ubuntu-server
 ```
 
-Run the synthetic report in the candidate and scan it in **Administration → Images**. An image publisher must
-review the scan before the catalog and template reference that image. Keep existing workspace image tags in place
-during candidate testing. Omitting headers reduces the packages in the candidate image. Host kernel maintenance
-remains a separate control.
+Run the synthetic report in the candidate and scan it in **Administration → Images**. The dedicated
+`ubuntu-server-pilot` template uses the exact image ID approved in scan #10. A rebuild will generally produce a
+different ID. For a replacement, review its scan and update the catalog pin and Terraform override together.
+Publish the Coder template with `scripts/bootstrap-coder.py --push ubuntu-server-pilot` using the host wrapper if
+needed. On Windows run `powershell -ExecutionPolicy Bypass -File .\scripts\devhub.ps1 scripts/bootstrap-coder.py --push ubuntu-server-pilot`.
+The publisher checks the local tag against the pin before uploading. After the portal loads the new catalog entry,
+publish it in **Administration → Images**. The entry starts hidden and requires active publisher approval even when
+the ordinary workspace launch gate is disabled. Keep the standard Ubuntu template and image tag in place.
+Omitting headers reduces the packages in the candidate image. Host kernel maintenance remains a separate control.
 
 ### Participant task
 
