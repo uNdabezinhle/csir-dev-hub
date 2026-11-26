@@ -153,6 +153,20 @@ End-to-end portal test: `python3 scripts/test-portal.py` covers 49 checks (auth,
 policy, IDE health, secrets, audit, licence broker, image scanning and approval, billing, KVM, backup status).
 
 ## Verified vs stubbed (summary)
+
+The portal counts pending provisioning requests against user and project quotas. Republish the bundled
+templates to enable the immutable `devhub_request_id` build parameter. After a lost response, reconciliation uses
+that ID to restore the project and licence assignment. Unsubmitted requests expire after ten minutes. Submitted
+requests with an unknown outcome retain their quota and seats until confirmed or resolved by an operator.
+Run `./scripts/dc.sh exec portal python -m app.provisioning list` to inspect reservations. After confirming
+that Coder did not create the workspace and will not finish the request, run
+`./scripts/dc.sh exec portal python -m app.provisioning release OWNER NAME --confirmed-no-create`.
+Compose runs one portal replica. The reservation guards use a shared SQLite database and do not provide portal HA.
+
+The portal reaches the Docker operations broker through a shared Unix socket. The broker has no network listener
+and retains Docker daemon access for its fixed operations. Trivy scans an exported image archive and has no
+daemon mount. Coder still needs daemon access to provision containers.
+From `stack/portal`, run `python -m unittest discover -s tests -v` after installing `requirements.txt`.
 - **Verified:**
   - Coder with Docker templates (Ubuntu Server 24.04/26.04, Ubuntu Desktop, Kali) and a persistent home
   - code-server and VS Code Desktop
@@ -173,12 +187,16 @@ policy, IDE health, secrets, audit, licence broker, image scanning and approval,
   - The `windows-kvm` template is pushed to Coder.
   - The `packer/windows-2022` pipeline (Microsoft evaluation ISO) validates.
   - Neither is built: the PoC box's nested KVM crashes the host kernel, so a KVM host is needed (docs/extending-kvm.md).
-- **Stubbed:** the KMS host (`kms.csir.local`) and off-host backup replication.
+- **Stubbed:** the KMS host (`kms.csir.local`). Off-host backup replication requires a configured restic repository.
 - **Planned:** HA and TLS with wildcard apps, AD, WebAuthn, Loki, recording retention.
 
 See [docs/annex-mapping.md](docs/annex-mapping.md).
 
 ## Further docs
+
+- [docs/research-pilot.md](docs/research-pilot.md): blueprint pilot, provisioning records, and dataset and compute readiness
+
+- [docs/upgrade-acceptance.md](docs/upgrade-acceptance.md): upgrade, rollback, release checks, and production readiness
 - [docs/local-windows.md](docs/local-windows.md) - run the stack on a Windows 11 laptop with Docker Desktop (`scripts/start-desktop.ps1`, http://localhost URLs)
 - [docs/auth-mfa.md](docs/auth-mfa.md): Keycloak, LDAP and MFA design and demo
 - [docs/ide-options.md](docs/ide-options.md): code-server, VS Code Desktop, JetBrains, desktops

@@ -1,7 +1,7 @@
 """KVM/libvirt provider: capacity reporting, VM inventory, power and snapshot actions for VM workspaces.
-PoC transport: `virsh` executed in the libvirt container through the Docker API (the portal already holds the Docker
-socket). Production: libvirt-python over qemu+tls:// / qemu+ssh:// to each KVM host (same method surface)."""
-import os, re, shlex, logging
+The engine broker executes approved virsh commands in the libvirt container."""
+import os, re, logging
+from .. import engine
 log = logging.getLogger("kvm")
 LIBVIRT_CONTAINER = os.environ.get("LIBVIRT_CONTAINER", "csir-devhub-libvirt-1")
 
@@ -11,6 +11,9 @@ class KvmProvider:
     name = "libvirt (virsh via Docker API in csir-devhub-libvirt)"
 
     def _virsh(self, *args, timeout_ok=False):
+        return engine.call("virsh", args=args)
+
+    def _local_virsh(self, *args):
         import docker
         try: c = docker.from_env().containers.get(LIBVIRT_CONTAINER)
         except Exception as e: raise KvmError(f"libvirt container unavailable: {type(e).__name__}")
@@ -87,15 +90,21 @@ class KvmProvider:
     def delete_snapshot(self, domain, name): return self._virsh("snapshot-delete", domain, name)
 
     def rdp_forward(self, domain, guest_port=3389):
+        host, port = engine.call("rdp-forward", domain=domain, guest_port=guest_port)
+        return host, port
+
+    def _local_rdp_forward(self, domain, guest_port):
         """Brokered RDP to a VM without exposing 3389 anywhere: DNAT <libvirt-container>:<port> -> <vm-ip>:3389 on the
         private Docker network, accepted ONLY from guacd's address. Returns (host, port) for the Guacamole connection."""
         import docker, zlib
+        from ipaddress import IPv4Address
         ip = self.vm_ip(domain)
         if not ip: raise KvmError(f"{domain}: no DHCP lease yet (VM still booting?)")
         cli = docker.from_env(); lv = cli.containers.get(LIBVIRT_CONTAINER)
         g = cli.containers.get(os.environ.get("GUACD_CONTAINER", "csir-devhub-guacd-1"))
         gip = next((n["IPAddress"] for k, n in g.attrs["NetworkSettings"]["Networks"].items() if k.endswith("core")), None)
         if not gip: raise KvmError("guacd is not on the core network")
+        gip, ip = IPv4Address(gip), IPv4Address(ip)
         port = 20000 + zlib.crc32(domain.encode()) % 10000
         script = f"""set -e
 iptables -t nat -S PREROUTING | grep -- '--dport {port} ' | sed 's/^-A/-D/' | while read -r r; do iptables -t nat $r; done

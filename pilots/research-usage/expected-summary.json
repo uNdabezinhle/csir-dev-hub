@@ -1,0 +1,9 @@
+{
+  "dataset_version": "workspace-usage-v1",
+  "totals": {"vcpu_hours": "12.00", "memory_gib_hours": "25.00"},
+  "projects": [
+    {"project_id": "demo-alpha", "vcpu_hours": "7.50", "memory_gib_hours": "15.00"},
+    {"project_id": "demo-beta", "vcpu_hours": "4.00", "memory_gib_hours": "8.50"},
+    {"project_id": "demo-gamma", "vcpu_hours": "0.50", "memory_gib_hours": "1.50"}
+  ]
+}

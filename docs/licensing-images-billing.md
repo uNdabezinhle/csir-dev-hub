@@ -10,17 +10,22 @@ All three modules are in `stack/portal/app/extensions/` (`licence.py`, `scanner.
 - **Which pool:** `profile_pool` maps a network profile to a pool (`windows-licensed` → `windows-kms`). `template_pool`
   maps a template to a pool and takes priority.
 - **Lifecycle:**
-  - The portal checks out a seat *before* provisioning and returns it if provisioning fails. Once the workspace exists,
-    the seat records its id.
+  - The portal reserves quota and checks out a seat before asking Coder to create the workspace. A definitive failure
+    releases both. If the response is lost, the reservation remains until the outcome is confirmed. Republish the bundled
+    templates to enable recovery through the immutable `devhub_request_id` parameter.
   - Start re-checks out a seat if the workspace has none (for example after a release on stop).
-  - Delete returns the seat.
+  - A delete request keeps quota and the seat allocated until Coder confirms deletion. A failed delete keeps both.
+    For pools with `release_on_stop`, reconciliation returns the seat after Coder confirms the workspace stopped.
   - `reconcile` runs every minute (with the metrics refresh), or on demand at `POST /admin/reconcile`. It returns seats whose workspace no longer
     exists in Coder, for example when the workspace was deleted with the Coder CLI.
+  - Inspect unresolved submissions with `./scripts/dc.sh exec portal python -m app.provisioning list`. After verifying
+    that Coder did not create the workspace and will not finish the request, release it with
+    `./scripts/dc.sh exec portal python -m app.provisioning release OWNER NAME --confirmed-no-create`.
 - **Caps and denials:**
   - The pool must have a free seat.
   - `role_max_seats` limits seats per person by highest role (engineer 1, owner 2, publisher 2, hub-admin 5, auditor and guest 0).
   - A project cap (`projects.max_licences`) is set in Admin → Licences.
-  - Every denial is audited (`licence.denied`).
+  - Denied checkouts are audited as `licence.checkout` with outcome `denied`.
 - **API:** `GET /api/licences`, which needs `licences.view` (hub-admin, image-publisher, auditor).
 
 ## Image scanning and approval
@@ -28,20 +33,21 @@ All three modules are in `stack/portal/app/extensions/` (`licence.py`, `scanner.
   `aquasec/trivy:0.76.2` container (exit code 0, report-only). It produces a step-summary table and a JSON artifact.
   The job `trivy-config` scans the Dockerfiles, compose files and Terraform files for misconfigurations, also report-only.
 - **Portal** (Admin → Images, permission `images.scan`, held by the image-publisher and hub-admin roles):
-  - Scan runs the same Trivy container through the Docker API, with a cache volume and a 1 GB memory limit, and stores the summary plus a gzipped report.
-  - The publisher can **approve** or **reject** an image digest (`images.approve`).
+  - The engine broker exports the local image and runs Trivy against the archive. Trivy has no Docker socket mount.
+    Scans run one at a time, use a cache volume and a 1 GB container memory limit, and accept archives up to 8 GiB.
+  - The publisher can **approve** or **reject** a scan for a local Docker image ID (`images.approve`).
   - Only a hub-admin can record a **risk acceptance**, which needs a note and expires after 30 days.
 - **Publish gate** (`image_scanning`): a catalog item with an `image` can only be published when all of these hold:
   - a scan exists
-  - the image has not been rebuilt since (same digest)
+  - the broker can resolve the current image ID and it matches the scanned image
   - it is approved, when `require_approval` is set
   - CRITICAL findings are ≤ `max_critical`, when `block_on_critical` is set, unless a valid risk acceptance exists
 
   Set `enforce_on_create: true` to apply the same gate when a workspace is created. Hub-admins can change all of these
   at runtime. `GET /api/images/gate?image=...` returns the decision and its reasons.
-- **Current state:** the PoC images carry the known CVEs of their upstream bases. For example `ubuntu-server:24.04` has
-  CRITICAL 10 / HIGH 131, mostly in code-server's bundled Node modules. The PoC catalog items are published under
-  audited risk acceptances. Rebuilding the images with updated packages is the fix.
+- **Historical PoC example:** an earlier scan of `ubuntu-server:24.04` reported
+  CRITICAL 10 / HIGH 131, mostly in code-server's bundled Node modules. The PoC used audited risk acceptances for
+  publication. Run a fresh scan before using those counts for a release decision.
 
 ## Billing / FinOps export
 - **Sources:**

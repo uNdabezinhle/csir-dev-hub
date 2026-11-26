@@ -1,20 +1,21 @@
-{% extends "base.html" %}{% block body %}
-<h1>Users</h1><p class="muted">Coder accounts merged with portal identities. OIDC users get roles from LDAP groups (via Keycloak) at each login; portal maps roles to Coder site roles (hub-admin&rarr;owner, image-publisher&rarr;template-admin, auditor&rarr;auditor).</p>
-<div class="card"><table><tr><th>User</th><th>Source</th><th>Portal roles</th><th>Coder</th><th>Quota (usage)</th><th>Last login</th>{% if can(user,'users.manage') %}<th>Manage</th>{% endif %}</tr>
+{% extends "base.html" %}{% block title %}Users · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('Users', 'Review portal identities, Coder accounts and role assignments.') }}<p class="muted">Coder accounts merged with portal identities. OIDC users get roles from LDAP groups (via Keycloak) at each login; portal maps roles to Coder site roles (hub-admin&rarr;owner, image-publisher&rarr;template-admin, auditor&rarr;auditor).</p>
+<div class="card"><label class="table-filter" data-filter-controls hidden>Filter users <input type="search" data-filter="admin_users-table-1"></label><div class="table-scroll" tabindex="0" role="region" aria-label="Users"><table id="admin_users-table-1"><tr><th>User</th><th>Source</th><th>Portal roles</th><th>Coder</th><th>Quota (usage)</th><th>Last login</th>{% if can(user,'users.manage') %}<th>Manage</th>{% endif %}</tr>
 {% for r in rows %}<tr><td><b>{{ r.username }}</b><br><span class="muted">{{ r.email }}</span></td>
 <td>{{ r.portal.auth_source if r.portal else 'coder only' }}{% if r.portal and r.portal.disabled %} <span class="badge err">disabled</span>{% endif %}</td>
 <td>{% if r.portal %}{% for x in r.portal.roles %}<span class="badge">{{ x }}</span>{% endfor %}{% else %}-{% endif %}</td>
 <td><span class="badge {{ 'ok' if r.coder_status=='active' else '' }}">{{ r.coder_status }}</span> {{ r.login_type }}<br>{% for x in r.coder_roles %}<span class="badge">{{ x }}</span>{% endfor %}</td>
 <td>{% if r.quota %}{{ r.usage.workspaces }}/{{ r.quota.max_workspaces }} ws, {{ r.usage.cpu }}/{{ r.quota.max_cpu }} vCPU, {{ r.usage.mem_gb }}/{{ r.quota.max_mem_gb }} GB{% else %}-{% endif %}</td>
 <td>{{ r.portal.last_login|ts if r.portal else '-' }}</td>
-{% if can(user,'users.manage') %}<td>{% if r.portal %}<form method="post" action="/admin/users/{{ r.username }}/roles" class="row">
+{% if can(user,'users.manage') %}<td>{% if r.portal %}<form method="post" action="/admin/users/{{ r.username }}/roles" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
 <select name="roles" multiple size="3">{% for x in ROLE_IDS %}<option {% if x in r.portal.roles %}selected{% endif %}>{{ x }}</option>{% endfor %}</select><button class="btn sm light">set roles</button></form>
-<form class="inline" method="post" action="/admin/users/{{ r.username }}/status"><input type="hidden" name="disabled" value="{{ 0 if r.portal.disabled else 1 }}">
-<button class="btn sm {{ 'light' if r.portal.disabled else 'red' }}">{{ 'enable' if r.portal.disabled else 'disable' }}</button></form>{% endif %}</td>{% endif %}</tr>{% endfor %}</table></div>
-{% if can(user,'users.manage') %}<h2>Create local user</h2><div class="card"><form method="post" action="/admin/users" class="row">
-<div><label>Username</label><input name="username" required></div><div><label>Full name</label><input name="full_name"></div><div><label>Email</label><input name="email"></div>
-<div><label>Password</label><input name="password" type="password" required minlength="10"></div>
-<div><label>Roles</label><select name="roles" multiple size="3">{% for x in ROLE_IDS %}<option {% if x=='engineer' %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></div>
+<form class="inline" method="post" action="/admin/users/{{ r.username }}/status"{% if not r.portal.disabled %} data-confirm="Disable {{ r.username }}?"{% endif %}><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="disabled" value="{{ 0 if r.portal.disabled else 1 }}">
+<button class="btn sm {{ 'light' if r.portal.disabled else 'red' }}">{{ 'enable' if r.portal.disabled else 'disable' }}</button></form>{% endif %}</td>{% endif %}</tr>{% endfor %}</table></div></div>
+{% if can(user,'users.manage') %}<h2>Create local user</h2><div class="card"><form method="post" action="/admin/users" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<div><label>Username<input name="username" required></label></div><div><label>Full name<input name="full_name"></label></div><div><label>Email<input name="email"></label></div>
+<div><label>Password<input name="password" type="password" required minlength="10"></label></div>
+<div><label>Roles<select name="roles" multiple size="3">{% for x in ROLE_IDS %}<option {% if x=='engineer' %}selected{% endif %}>{{ x }}</option>{% endfor %}</select></label></div>
 <button class="btn teal">Create</button></form><p class="muted">Local accounts are for break-glass/partners; staff should use CSIR SSO (LDAP + MFA).</p></div>{% endif %}
-<h2>Role model</h2><div class="card"><table>{% for k,v in ROLE_DESC.items() %}<tr><td><span class="badge">{{ k }}</span></td><td>{{ v }}</td></tr>{% endfor %}</table></div>
+<h2>Role model</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Role model"><table>{% for k,v in ROLE_DESC.items() %}<tr><td><span class="badge">{{ k }}</span></td><td>{{ v }}</td></tr>{% endfor %}</table></div></div>
 {% endblock %}

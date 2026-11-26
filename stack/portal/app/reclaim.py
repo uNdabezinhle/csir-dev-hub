@@ -38,8 +38,6 @@ def apply(plan, actor="reclaimer"):
         try:
             if act in ("stop", "delete"):
                 coder.build(ws["id"], act)
-                if act == "delete":
-                    with db.tx() as c: c.execute("UPDATE workspaces SET deleted_at=? WHERE id=?", (time.time(), ws["id"]))
             RECLAIMED.labels(action=act).inc()
             audit.log(actor, f"reclaim.{act}", f"{ws['owner_name']}/{ws['name']}", item["reason"])
             done.append(item)

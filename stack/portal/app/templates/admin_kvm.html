@@ -1,16 +1,17 @@
-{% extends "base.html" %}{% block body %}
-<h1>KVM / libvirt</h1>
-<div class="card">{% if cap.status == 'ok' %}<table><tr><th>Hypervisor</th><th>Acceleration</th><th>Host CPUs</th><th>Host RAM</th><th>Free RAM</th><th>Domains</th><th>Running</th><th>vCPU allocated</th></tr>
-<tr><td>{{ cap.hypervisor }}</td><td>{% if cap.accel == 'kvm' %}<span class="badge ok">kvm</span>{% else %}<span class="badge flag">{{ cap.accel }}</span>{% endif %}</td><td>{{ cap.cpus }}</td><td>{{ cap.mem_total_gb }} GB</td><td>{{ cap.mem_free_gb }} GB</td><td>{{ cap.domains }}</td><td>{{ cap.running }}</td><td>{{ cap.vcpu_alloc }}</td></tr></table>
+{% extends "base.html" %}{% block title %}KVM / libvirt · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('KVM / libvirt', 'Inspect virtual machines, snapshots and backup status.') }}
+<div class="card">{% if cap.status == 'ok' %}<div class="table-scroll" tabindex="0" role="region" aria-label="KVM / libvirt"><table><tr><th>Hypervisor</th><th>Acceleration</th><th>Host CPUs</th><th>Host RAM</th><th>Free RAM</th><th>Domains</th><th>Running</th><th>vCPU allocated</th></tr>
+<tr><td>{{ cap.hypervisor }}</td><td>{% if cap.accel == 'kvm' %}<span class="badge ok">kvm</span>{% else %}<span class="badge flag">{{ cap.accel }}</span>{% endif %}</td><td>{{ cap.cpus }}</td><td>{{ cap.mem_total_gb }} GB</td><td>{{ cap.mem_free_gb }} GB</td><td>{{ cap.domains }}</td><td>{{ cap.running }}</td><td>{{ cap.vcpu_alloc }}</td></tr></table></div>
 <p>Pools: {% for p in cap.pools %}<span class="badge">{{ p.name }} ({{ p.state }}{% if p.available %}, {{ p.available }} free{% endif %})</span>{% endfor %} &middot; Networks: {% for n in cap.networks %}<span class="badge">{{ n }}</span>{% endfor %}</p>
 {% if cap.accel != 'kvm' %}<p class="muted">This host runs guests under QEMU TCG (software emulation): nested KVM on the PoC box crashes in <code>vmx_vcpu_create</code>. Production KVM hosts set <code>KVM_ACCEL=kvm</code>.</p>{% endif %}
 {% else %}<p><span class="badge err">{{ cap.status }}</span></p>{% endif %}</div>
-<h2>Domains</h2><div class="card"><table><tr><th>Name</th><th>State</th><th>vCPU / RAM</th><th>Snapshots</th>{% if can(user,'*') %}<th>Actions</th>{% endif %}</tr>
+<h2>Domains</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Domains"><table><tr><th>Name</th><th>State</th><th>vCPU / RAM</th><th>Snapshots</th>{% if can(user,'*') %}<th>Actions</th>{% endif %}</tr>
 {% for d in domains %}<tr><td><code>{{ d.name }}</code></td><td>{{ d.state }}</td><td>{{ d.vcpus }} / {{ d.mem_mb }} MB</td><td>{% for s in d.snapshots or [] %}<span class="badge">{{ s }}</span>{% endfor %}</td>
-{% if can(user,'*') %}<td><form class="row" method="post" action="/admin/kvm/{{ d.name }}/snapshot"><input name="snapshot" placeholder="snapshot name" style="width:120px"><button class="btn sm light">snapshot</button></form>
-{% for s in d.snapshots or [] %}<form class="inline" method="post" action="/admin/kvm/{{ d.name }}/revert"><input type="hidden" name="snapshot" value="{{ s }}"><button class="btn sm light">revert {{ s }}</button></form>{% endfor %}
-{% if d.state == 'running' %}<form class="inline" method="post" action="/admin/kvm/{{ d.name }}/shutdown"><button class="btn sm light">shutdown</button></form>{% else %}<form class="inline" method="post" action="/admin/kvm/{{ d.name }}/start"><button class="btn sm light">start</button></form>{% endif %}</td>{% endif %}</tr>
-{% else %}<tr><td colspan="5" class="muted">No VMs</td></tr>{% endfor %}</table></div>
+{% if can(user,'*') %}<td><form class="row" method="post" action="/admin/kvm/{{ d.name }}/snapshot"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="snapshot" placeholder="snapshot name" style="width:120px"><button class="btn sm light">snapshot</button></form>
+{% for s in d.snapshots or [] %}<form class="inline" method="post" action="/admin/kvm/{{ d.name }}/revert" data-confirm="Revert {{ d.name }} to snapshot {{ s }}? Changes since that snapshot can be lost."><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input type="hidden" name="snapshot" value="{{ s }}"><button class="btn sm light">Revert {{ s }}</button></form>{% endfor %}
+{% if d.state == 'running' %}<form class="inline" method="post" action="/admin/kvm/{{ d.name }}/shutdown"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm light">shutdown</button></form>{% else %}<form class="inline" method="post" action="/admin/kvm/{{ d.name }}/start"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm light">start</button></form>{% endif %}</td>{% endif %}</tr>
+{% else %}<tr><td colspan="5" class="muted">No VMs</td></tr>{% endfor %}</table></div></div>
 <h2>Backups</h2><div class="card"><p>Last backup: <b>{{ backup.status }}</b> {% if backup.finished_at %}at {{ backup.finished_at }} &middot; {{ backup.path }} &middot; {{ backup.size }}{% endif %}{% if backup.detail %} <span class="muted">{{ backup.detail }}</span>{% endif %}</p>
 {% if backup.verify %}<p>Last restore test: <b>{{ backup.verify.status }}</b> {{ backup.verify.finished_at }}</p>{% endif %}</div>
 {% endblock %}

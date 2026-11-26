@@ -3,26 +3,31 @@ Sits in front of Coder (orchestrator) and adds: SSO/local login, six-role RBAC, 
 quotas + network profiles, VS Code / noVNC / brokered-RDP launch, secrets injection, projects, idle reclaim, FinOps
 estimates, audit log, health and an admin console (users, workspaces, images, quotas)."""
 import csv, io, json, logging, re, threading, time
-from fastapi import FastAPI, Request, Form, HTTPException
+from sqlite3 import IntegrityError
+from typing import Annotated
+from uuid import uuid4
+from fastapi import Depends, FastAPI, Request, Form, HTTPException
 from fastapi.responses import RedirectResponse, HTMLResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
-from starlette.middleware.sessions import SessionMiddleware
 from prometheus_client import generate_latest, CONTENT_TYPE_LATEST
 import httpx
 from . import db, auth, rbac, coder, quotas, reclaim, audit, guac, secrets_store
 from .config import (POLICY, ROLE_IDS, HEALTH_TARGETS, CODER_PUBLIC_URL, GRAFANA_PUBLIC_URL, KEYCLOAK_PUBLIC_URL,
                      GUAC_PUBLIC_URL, HOST_IP)
 from .metrics import LOGINS, WS_ACTIONS, QUOTA_DENIALS, USERS, WORKSPACES, COST_RATE, ALLOC_CPU, ALLOC_MEM
+from . import blueprints, engine, provisioning
+from .browser_security import PortalSessions, csrf_token, verify_csrf
+from .metrics import RECONCILE_FAILURES, RECONCILE_LAST_SUCCESS, RECONCILE_OK
 from .extensions import get as ext
 from pathlib import Path
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s %(message)s")
 log = logging.getLogger("portal")
 BASE = Path(__file__).resolve().parent
-app = FastAPI(title="CSIR Dev Hub Portal", version="0.1.0")
+app = FastAPI(title="CSIR Dev Hub Portal", version="0.1.0", dependencies=[Depends(verify_csrf)])
 from .config import SESSION_KEY
-app.add_middleware(SessionMiddleware, secret_key=SESSION_KEY,
+app.add_middleware(PortalSessions, secret_key=SESSION_KEY,
                    session_cookie="devhub_session", max_age=8 * 3600, same_site="lax")
 app.mount("/static", StaticFiles(directory=BASE / "static"), name="static")
 tpl = Jinja2Templates(directory=BASE / "templates")
@@ -36,7 +41,7 @@ tpl.env.globals.update(can=rbac.can, CODER=CODER_PUBLIC_URL, GRAFANA=GRAFANA_PUB
 
 def render(request, name, user, **ctx):
     flash = request.session.pop("flash", None)
-    return tpl.TemplateResponse(request, name, {"user": user, "flash": flash, **ctx})
+    return tpl.TemplateResponse(request, name, {"user": user, "flash": flash, "csrf_token": csrf_token(request), **ctx})
 
 def flash(request, msg, kind="ok"): request.session["flash"] = {"msg": msg, "kind": kind}
 
@@ -58,33 +63,52 @@ phase2.register(app, need, render, flash, ip)
 # ------------------------------------------------------------------ startup
 @app.on_event("startup")
 def startup():
-    db.init(); ext("licence").init(); ext("scanner").init(); auth.bootstrap_admin(); reclaim.start()
+    db.init(); ext("licence").init(); ext("scanner").init(); auth.bootstrap_admin()
+    reclaim.start()
     threading.Thread(target=_metrics_loop, daemon=True).start()
     log.info("portal started; coder healthy=%s", coder.healthy())
 
 def _metrics_loop():
     while True:
         try: refresh_metrics()
-        except Exception as e: log.debug("metrics: %s", e)
+        except Exception: log.exception("Portal metrics refresh failed")
         time.sleep(60)
 
 def reconcile():
+    try:
+        live = _reconcile()
+    except Exception:
+        RECONCILE_FAILURES.inc()
+        RECONCILE_OK.set(0)
+        raise
+    RECONCILE_LAST_SUCCESS.set(time.time())
+    RECONCILE_OK.set(1)
+    return live
+
+
+def _reconcile():
     """Keep the portal ledger in sync with Coder: import workspaces created outside the portal (CLI/Coder UI) using their
     build parameters, and mark ledger rows deleted when the workspace no longer exists in Coder."""
-    live = {w["id"]: w for w in coder.workspaces()}
     led = {r["id"]: r for r in db.q("SELECT * FROM workspaces WHERE deleted_at IS NULL")}
+    requests = provisioning.pending()
+    observed_at = time.time()
+    live = {w["id"]: w for w in coder.workspaces() if coder.ws_status(w) != "deleted"}
+    provisioning.recover(requests, live.values(), observed_at, coder.build_params)
     with db.tx() as c:
         for wid in set(led) - set(live):
             c.execute("UPDATE workspaces SET deleted_at=? WHERE id=?", (time.time(), wid))
     for wid in set(live) - set(led):
-        if db.one("SELECT 1 FROM workspaces WHERE id=?", (wid,)): continue
+        with db.tx() as c:
+            # Repair rows that an older portal marked deleted before the Coder build finished.
+            if c.execute("UPDATE workspaces SET deleted_at=NULL WHERE id=?", (wid,)).rowcount:
+                continue
         w = live[wid]; bp = coder.build_params(w["latest_build"]["id"])
         with db.tx() as c:
-            c.execute("INSERT INTO workspaces(id,owner,name,template,project_id,profile,cpu,mem_gb,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+            c.execute("INSERT OR IGNORE INTO workspaces(id,owner,name,template,project_id,profile,cpu,mem_gb,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
                       (wid, w["owner_name"], w["name"], w["template_name"], None, bp.get("network_profile", "dev"),
                        int(bp.get("cpu", 0) or 0), int(bp.get("memory", 0) or 0), "import", time.time()))
-    try: ext("licence").reconcile(live)          # return seats of workspaces deleted outside the portal
-    except Exception as e: log.warning("licence reconcile: %s", e)
+    deleted = {r["id"] for r in db.q("SELECT id FROM workspaces WHERE deleted_at IS NOT NULL")}
+    ext("licence").reconcile(live, deleted=deleted)
     return live
 
 def refresh_metrics():
@@ -153,7 +177,7 @@ def _after_login(request, username, email, name, roles, source, password=None):
         detail["coder_sync_error"] = str(e)[:200]
     audit.log(username, f"login.{source}", detail=detail, ip=ip(request))
 
-@app.get("/logout")
+@app.post("/logout")
 def logout(request: Request):
     u = request.session.get("user"); idt = request.session.get("id_token")
     src = (db.one("SELECT auth_source FROM users WHERE username=?", (u,)) or {}).get("auth_source")
@@ -205,45 +229,89 @@ def home(request: Request):
 
 @app.post("/workspaces")
 def create_ws(request: Request, template: str = Form(...), name: str = Form(...), cpu: int = Form(2), memory: int = Form(2),
-              profile: str = Form("dev"), project_id: str = Form(""), ubuntu_version: str = Form("24.04"), ide: str = Form("full")):
+              profile: str = Form("dev"), project_id: str = Form(""), ubuntu_version: str = Form("24.04"), ide: str = Form("full"),
+              blueprint_id: Annotated[int | None, Form()] = None):
     u = need(request, "workspace.own")
     name = name.strip().lower()
     def deny(reason, msg):
         QUOTA_DENIALS.labels(reason=reason).inc(); audit.log(u["username"], "workspace.create", f"{u['username']}/{name}", msg, ip(request), "denied")
         flash(request, msg, "err"); return RedirectResponse("/", 303)
     if not NAME_RE.match(name): return deny("name", "Name must be 3-32 chars: lowercase letters, digits, dashes")
+    blueprint = None
+    if blueprint_id is not None:
+        blueprint = blueprints.get(blueprint_id)
+        if not blueprint or blueprint["project_id"] not in {p["id"] for p in user_projects(u)}:
+            raise HTTPException(404)
+        spec = blueprint["spec"]
+        template, profile = spec["template"], spec["profile"]
+        cpu, memory = spec["cpu"], spec["memory"]
+        project_id = str(blueprint["project_id"])
+        ubuntu_version = spec["ubuntu_version"]
+        ide = spec["ide"]
     item = next((i for i in catalog_items(u) if i["template"] == template), None)
     if not item: return deny("catalog", f"Template '{template}' is not in the published catalog")
     if item.get("min_role") == "engineer" and set(u["roles"]) <= {"guest", "auditor"}: return deny("role", f"{item['display_name']} is not available to your role")
     if profile not in allowed_profiles(u, item): return deny("profile", f"Network profile '{profile}' not allowed for you on this template")
-    if "guest" in u["roles"] and len(u["roles"]) == 1: cpu, memory = min(cpu, 1), min(memory, 2)
-    project = db.one("SELECT * FROM projects WHERE id=?", (int(project_id),)) if project_id else None
+    if "guest" in u["roles"] and len(u["roles"]) == 1:
+        if blueprint and (cpu > 1 or memory > 2):
+            return deny("resources", "This blueprint exceeds the guest resource limit")
+        cpu, memory = min(cpu, 1), min(memory, 2)
+    if cpu < 1 or memory < 1: return deny("resources", "CPU and memory must be positive")
+    try: project = db.one("SELECT * FROM projects WHERE id=?", (int(project_id),)) if project_id else None
+    except ValueError: return deny("project", "Invalid project")
+    if project_id and not project: return deny("project", "Project does not exist")
     if project and project["id"] not in [p["id"] for p in user_projects(u)]: return deny("project", "You are not a member of that project")
-    v = quotas.check(u, cpu, memory, project)
-    if v: return deny("quota", "Quota exceeded: " + "; ".join(v))
     from .extensions.scanner import policy as scan_policy
     gate = ext("scanner").gate(item.get("image")) if item.get("image") and scan_policy().get("enforce_on_create") else []
+    if blueprint:
+        if item.get("image") != spec["catalog_image"] or ext("scanner").image_id(spec["catalog_image"]) != spec["catalog_image_id"]:
+            return deny("image", "The blueprint image changed or is unavailable. Ask the project owner for a new blueprint.")
+        gate = ext("scanner").gate(spec["catalog_image"])
     if gate: return deny("image", "Image not approved: " + "; ".join(gate))
-    lic = ext("licence"); pool = lic.pool_for(profile, template); seat = None
+    owner = u["username"]
+    request_id = uuid4().hex
+    evidence = None
+    if blueprint:
+        evidence = {"schema_version": 1, "blueprint_id": blueprint["id"], "blueprint_name": blueprint["name"],
+                    "request_id": request_id, "project_id": project["id"], "project": project["name"],
+                    "workspace_name": name, "requested_by": owner, "requested_at": time.time(), "recipe": spec,
+                    "cost_estimate": quotas.estimate(cpu, memory)}
+    v = provisioning.reserve(u, name, template, profile, cpu, memory, project, request_id, evidence)
+    if v: return deny("quota", "Quota exceeded: " + "; ".join(v))
+    lic = ext("licence"); pool = lic.pool_for(profile, template)
     if pool:   # reserve a licence seat before provisioning; returned again if provisioning fails
-        try: seat = lic.checkout(pool, u, u["username"], workspace=f"{u['username']}/{name}", project=project, ip=ip(request))
-        except Exception as e: return deny("licence", f"Licence: {e}")
+        try: lic.checkout(pool, u, owner, workspace=f"{owner}/{name}", project=project, ip=ip(request), request_name=name, request_id=request_id)
+        except Exception as e:
+            provisioning.cancel(owner, name, request_id=request_id)
+            return deny("licence", f"Licence: {e}")
+    submitted = False
     try:
         coder.ensure_user(u["username"], u["email"], u["full_name"], "oidc" if u["auth_source"] == "oidc" else "password")
         if "rdp" in item.get("access", []): secrets_store.ensure_rdp_password(u["username"])
-        tparams = {p["name"] for p in coder.template_params(template)}
-        params = {**item.get("params", {}), "cpu": cpu, "memory": memory, "network_profile": profile, "ubuntu_version": ubuntu_version, "ide": ide}
+        definitions = coder.version_params(spec["template_version_id"]) if blueprint else coder.template_params(template)
+        tparams = {p["name"] for p in definitions}
+        defaults = spec["template_defaults"] if blueprint else item.get("params", {})
+        params = {**defaults, "cpu": cpu, "memory": memory, "network_profile": profile, "ubuntu_version": ubuntu_version, "ide": ide}
         params = {k: v for k, v in params.items() if k in tparams}
-        ws = coder.create_workspace(u["username"], template, name, params, ttl_ms=8 * 3600 * 1000)
+        if blueprint and not {"devhub_request_id", "cpu", "memory", "network_profile"} <= tparams:
+            raise ValueError("Blueprint template no longer supports the required provisioning parameters")
+        if "devhub_request_id" in tparams:
+            params["devhub_request_id"] = request_id
+        if any(w["name"] == name for w in coder.workspaces(owner)):
+            raise ValueError("A workspace with that name already exists")
+        provisioning.submitted(owner, name, request_id)
+        submitted = True
+        version = {"template_version_id": spec["template_version_id"]} if blueprint else {}
+        ws = coder.create_workspace(u["username"], template, name, params, ttl_ms=8 * 3600 * 1000, **version)
     except Exception as e:
-        if seat: lic.release(u["username"], "provisioning failed", seat_id=seat["id"], ip=ip(request))
+        rejected = isinstance(e, coder.CoderError) and (
+            e.status is None or (400 <= e.status < 500 and e.status != 408)
+        )
+        if not submitted or rejected:
+            provisioning.cancel(owner, name, request_id=request_id)
         audit.log(u["username"], "workspace.create", f"{u['username']}/{name}", str(e)[:300], ip(request), "error")
         flash(request, f"Provisioning failed: {e}", "err"); return RedirectResponse("/", 303)
-    if seat:
-        with db.tx() as c: c.execute("UPDATE licence_seats SET workspace_id=? WHERE id=?", (ws["id"], seat["id"]))
-    with db.tx() as c:
-        c.execute("INSERT INTO workspaces(id,owner,name,template,project_id,profile,cpu,mem_gb,created_by,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
-                  (ws["id"], u["username"], name, template, project["id"] if project else None, profile, cpu, memory, u["username"], time.time()))
+    provisioning.complete(ws, request_id=request_id)
     WS_ACTIONS.labels(action="create", template=template).inc()
     audit.log(u["username"], "workspace.create", f"{u['username']}/{name}", {"template": template, "cpu": cpu, "mem_gb": memory, "profile": profile,
               "project": project["name"] if project else None}, ip(request))
@@ -274,11 +342,6 @@ def ws_action(request: Request, ws_id: str, action: str):
             t = coder.template_by_name(ws["template_name"])
             coder.req("POST", f"/api/v2/workspaces/{ws_id}/builds", json={"transition": "start", "template_version_id": t["active_version_id"]})
         else: coder.build(ws_id, action)
-        if action == "delete":
-            with db.tx() as c: c.execute("UPDATE workspaces SET deleted_at=? WHERE id=?", (time.time(), ws_id))
-            lic.release(u["username"], "workspace deleted", workspace_id=ws_id, ip=ip(request))
-        if action == "stop" and pool and (lic.pool(pool) or {}).get("release_on_stop"):
-            lic.release(u["username"], "workspace stopped (release_on_stop)", workspace_id=ws_id, ip=ip(request))
         WS_ACTIONS.labels(action=action, template=ws["template_name"]).inc()
         audit.log(u["username"], f"workspace.{action}", f"{ws['owner_name']}/{ws['name']}", ip=ip(request))
         flash(request, f"{action.capitalize()} requested for {ws['owner_name']}/{ws['name']}")
@@ -343,6 +406,128 @@ def projects_page(request: Request):
         p["cost"] = quotas.estimate(p["usage"]["cpu"], p["usage"]["mem_gb"])
         p["can_manage"] = rbac.can(u, "*") or (rbac.can(u, "projects.manage") and p["owner"] == u["username"])
     return render(request, "projects.html", u, projects=projs, users=[r["username"] for r in db.q("SELECT username FROM users ORDER BY username")])
+
+
+def _blueprint_project(user, project_id):
+    if any(p["id"] == project_id for p in user_projects(user)) or (
+        rbac.can(user, "projects.view_workspaces") and rbac.can(user, "audit.view")
+    ):
+        project = db.one("SELECT * FROM projects WHERE id=?", (project_id,))
+        if project:
+            return project
+    raise HTTPException(404)
+
+
+@app.get("/projects/{pid}/blueprints", response_class=HTMLResponse)
+def project_blueprints(request: Request, pid: int, blueprint: int | None = None):
+    user = need(request)
+    project = _blueprint_project(user, pid)
+    recipes = blueprints.for_project(pid)
+    if blueprint is not None:
+        recipes = [recipe for recipe in recipes if recipe["id"] == blueprint]
+        if not recipes:
+            raise HTTPException(404)
+    for recipe in recipes:
+        recipe["records"] = blueprints.records(recipe["id"])
+    can_manage = rbac.can(user, "*") or (rbac.can(user, "projects.manage") and project["owner"] == user["username"])
+    options = [dict(item, allowed=allowed_profiles(user, item)) for item in catalog_items(user)
+               if item.get("kind") == "container" and item.get("image")]
+    may_request = rbac.can(user, "workspace.own") and any(p["id"] == pid for p in user_projects(user))
+    may_review = rbac.can(user, "*")
+    requests = db.q("""SELECT * FROM project_requests WHERE project_id=? AND (? OR requested_by=?)
+                      ORDER BY requested_at DESC""", (pid, may_review, user["username"]))
+    return render(request, "blueprints.html", user, project=project, recipes=recipes, selected=blueprint,
+                  can_manage=can_manage, options=options, can_launch=may_request, may_review=may_review,
+                  project_requests=requests)
+
+
+@app.post("/projects/{pid}/blueprints")
+def save_blueprint(request: Request, pid: int, name: str = Form(...), repository: str = Form(...),
+                   revision: str = Form(...), template: str = Form(...), profile: str = Form(...),
+                   cpu: int = Form(...), memory: int = Form(...)):
+    user = need(request, "projects.manage")
+    project = _blueprint_project(user, pid)
+    if not (rbac.can(user, "*") or project["owner"] == user["username"]):
+        raise HTTPException(403)
+    try:
+        repository, revision = blueprints.parse_source(repository, revision)
+        item = next((i for i in catalog_items(user) if i["template"] == template), None)
+        if not item or item.get("kind") != "container" or not item.get("image") or profile not in allowed_profiles(user, item):
+            raise ValueError("Choose an eligible container template and network profile")
+        if cpu < 1 or memory < 1:
+            raise ValueError("CPU and memory must be positive")
+        active = coder.template_by_name(template)
+        if not active or not active.get("active_version_id"):
+            raise ValueError("The Coder template has no active version")
+        params = {p["name"] for p in coder.version_params(active["active_version_id"])}
+        if not {"devhub_request_id", "cpu", "memory", "network_profile"} <= params:
+            raise ValueError("Republish the current Dev Hub template before creating blueprints")
+        image = item["image"]
+        image_id = ext("scanner").image_id(image)
+        gate = ext("scanner").gate(image)
+        if not image_id or gate:
+            raise ValueError("The catalog image is unavailable or blocked by image policy")
+        spec = {"repository": repository, "revision": revision, "template": template, "profile": profile,
+                "cpu": cpu, "memory": memory, "ubuntu_version": item.get("params", {}).get("ubuntu_version", "24.04"),
+                "ide": "full", "template_version_id": active["active_version_id"], "catalog_image": image,
+                "catalog_image_id": image_id, "template_defaults": item.get("params", {})}
+        blueprint_id = blueprints.add(pid, name, spec, user["username"])
+    except (IntegrityError, ValueError, coder.CoderError, httpx.RequestError) as error:
+        flash(request, "A blueprint with that name already exists" if isinstance(error, IntegrityError) else str(error), "err")
+        return RedirectResponse(f"/projects/{pid}/blueprints", 303)
+    audit.log(user["username"], "project.blueprint.create", str(blueprint_id), {"project_id": pid}, ip(request))
+    flash(request, "Blueprint saved")
+    return RedirectResponse(f"/projects/{pid}/blueprints?blueprint={blueprint_id}", 303)
+
+
+@app.get("/api/projects/{pid}/evidence/{workspace_id}")
+def project_evidence(request: Request, pid: int, workspace_id: str):
+    user = need(request)
+    _blueprint_project(user, pid)
+    row = db.one("""SELECT e.record FROM provisioning_evidence e
+                    JOIN project_blueprints b ON b.id=e.blueprint_id
+                    WHERE b.project_id=? AND e.workspace_id=?""", (pid, workspace_id))
+    if not row:
+        raise HTTPException(404)
+    return JSONResponse({**json.loads(row["record"]), "workspace_id": workspace_id}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/projects/{pid}/requests")
+def submit_project_request(request: Request, pid: int, kind: str = Form(...),
+                           subject: str = Form(...), detail: str = Form(...)):
+    user = need(request, "workspace.own")
+    if not any(p["id"] == pid for p in user_projects(user)):
+        raise HTTPException(404)
+    subject, detail = subject.strip(), detail.strip()
+    if kind not in {"dataset", "capacity", "support"} or not 1 <= len(subject) <= 160 or not 1 <= len(detail) <= 2000:
+        raise HTTPException(422, "Choose a request type and supply a subject and details")
+    with db.tx() as conn:
+        request_id = conn.execute(
+            """INSERT INTO project_requests(project_id,kind,subject,detail,requested_by,requested_at)
+               VALUES (?,?,?,?,?,?)""", (pid, kind, subject, detail, user["username"], time.time()),
+        ).lastrowid
+    audit.log(user["username"], "project.request.submit", str(request_id), {"project_id": pid, "kind": kind}, ip(request))
+    flash(request, "Request submitted for operator review")
+    return RedirectResponse(f"/projects/{pid}/blueprints#project-requests", 303)
+
+
+@app.post("/projects/{pid}/requests/{rid}/review")
+def review_project_request(request: Request, pid: int, rid: int, decision: str = Form(...), note: str = Form(...)):
+    user = need(request, "*")
+    note = note.strip()
+    if decision not in {"reviewed", "declined"} or not 1 <= len(note) <= 2000:
+        raise HTTPException(422, "Choose a review outcome and enter a note")
+    with db.tx() as conn:
+        result = conn.execute(
+            """UPDATE project_requests SET status=?, reviewed_by=?, reviewed_at=?, review_note=?
+               WHERE id=? AND project_id=? AND status='submitted'""",
+            (decision, user["username"], time.time(), note, rid, pid),
+        )
+        if not result.rowcount:
+            raise HTTPException(409, "This request is unavailable or has already been reviewed")
+    audit.log(user["username"], "project.request." + decision, str(rid), {"project_id": pid}, ip(request))
+    flash(request, "Review recorded")
+    return RedirectResponse(f"/projects/{pid}/blueprints#project-requests", 303)
 
 @app.post("/projects")
 def projects_create(request: Request, name: str = Form(...), cost_centre: str = Form(""), max_workspaces: int = Form(10),
@@ -450,12 +635,11 @@ def admin_images(request: Request):
     except Exception: tmpls = {}
     images = []
     try:
-        import docker
-        for im in docker.from_env().images.list(filters={"label": "org.csir.devhub.image"}):
-            images.append({"tags": im.tags, "id": im.short_id, "size_mb": round(im.attrs["Size"] / 1e6), "created": im.attrs["Created"][:16],
-                           "kind": im.labels.get("org.csir.devhub.image"), "scan": ext("scanner").scan(im.tags[0] if im.tags else im.id),
-                           "approval": ext("scanner").approval(im.tags[0]) if im.tags else None,
-                           "gate": ext("scanner").gate(im.tags[0]) if im.tags else []})
+        for im in engine.call("images"):
+            tag = im["tags"][0] if im["tags"] else None
+            images.append({**im, "scan": ext("scanner").scan(tag or im["full_id"]),
+                           "approval": ext("scanner").approval(tag) if tag else None,
+                           "gate": ext("scanner").gate(tag) if tag else []})
     except Exception as e: images.append({"tags": [f"docker API unavailable: {e}"], "id": "", "size_mb": 0, "created": "", "kind": "", "scan": ""})
     from .extensions.scanner import policy as scan_policy
     return render(request, "admin_images.html", u, catalog=catalog_items(u, True), templates=tmpls, images=images,
@@ -533,7 +717,10 @@ def admin_audit(request: Request, actor: str = "", action: str = "", format: str
     return render(request, "admin_audit.html", u, rows=rows, actor=actor, action=action)
 
 def health_checks():
-    out = []
+    last = RECONCILE_LAST_SUCCESS._value.get()
+    age = max(0, int(time.time() - last)) if last else None
+    out = [{"name": "Workspace reconciliation", "ok": bool(RECONCILE_OK._value.get() and age is not None and age < 300),
+            "detail": f"Last success {age}s ago" if age is not None else "No successful run yet", "ms": 0}]
     for name, url in HEALTH_TARGETS.items():
         t0 = time.time()
         try: r = httpx.get(url, timeout=4, follow_redirects=True); ok = r.status_code < 400; detail = f"HTTP {r.status_code}"
@@ -543,7 +730,7 @@ def health_checks():
         import socket; s = socket.create_connection(("openldap", 389), 3); s.close(); out.append({"name": "OpenLDAP", "ok": True, "detail": "tcp/389 open", "ms": 0})
     except Exception as e: out.append({"name": "OpenLDAP", "ok": False, "detail": type(e).__name__, "ms": 0})
     try:
-        import docker; v = docker.from_env().version(); out.append({"name": "Docker engine", "ok": True, "detail": v.get("Version"), "ms": 0})
+        v = engine.call("version"); out.append({"name": "Docker engine", "ok": True, "detail": v, "ms": 0})
     except Exception as e: out.append({"name": "Docker engine", "ok": False, "detail": type(e).__name__, "ms": 0})
     return out
 
@@ -581,6 +768,11 @@ def admin_finops_set(request: Request, tier: str = Form(...)):
 # ------------------------------------------------------------------ JSON API + metrics
 @app.get("/api/health")
 def api_health(): return {"portal": "ok", "coder": coder.healthy()}
+
+
+@app.get("/api/csrf")
+def api_csrf(request: Request):
+    return JSONResponse({"token": csrf_token(request)}, headers={"Cache-Control": "no-store"})
 
 @app.get("/api/me")
 def api_me(request: Request):

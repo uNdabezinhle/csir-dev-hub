@@ -1,6 +1,7 @@
-{% extends "base.html" %}{% block body %}
-<h1>Platform health</h1><div class="grid">{% for k,v in summary.items() %}<div class="card"><div class="muted">{{ k|replace('_',' ') }}</div><div class="kpi">{{ v }}</div></div>{% endfor %}</div>
-<div class="card"><table><tr><th>Service</th><th>Status</th><th>Detail</th><th>Latency</th></tr>{% for c in checks %}<tr><td>{{ c.name }}</td><td><span class="badge {{ 'ok' if c.ok else 'err' }}">{{ 'up' if c.ok else 'down' }}</span></td><td>{{ c.detail }}</td><td>{{ c.ms }} ms</td></tr>{% endfor %}</table></div>
+{% extends "base.html" %}{% block title %}Platform health · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('Platform health', 'Check dependencies, workspace agents and reconciliation.') }}<div class="grid health-summary">{% for k,v in summary.items() %}<div class="card"><div class="muted">{{ k|replace('_',' ')|capitalize }}</div><div class="kpi">{{ v }}</div></div>{% endfor %}</div>
+<div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Platform health"><table><tr><th>Service</th><th>Status</th><th>Detail</th><th>Latency</th></tr>{% for c in checks %}<tr><td>{{ c.name }}</td><td><span class="badge {{ 'ok' if c.ok else 'err' }}">{{ 'up' if c.ok else 'down' }}</span></td><td>{{ c.detail }}</td><td>{{ c.ms }} ms</td></tr>{% endfor %}</table></div></div>
 <div class="card"><b>Consoles</b>: <a href="{{ CODER }}" target="_blank">Coder admin</a> &middot; <a href="{{ GRAFANA }}/d/csir-devhub" target="_blank">Grafana</a> &middot; <a href="{{ KEYCLOAK }}/admin/master/console/#/csir" target="_blank">Keycloak</a> &middot; <a href="{{ GUAC }}/" target="_blank">Guacamole</a></div>
-<h2>Extension modules</h2><div class="card"><table>{% for k,v in extensions.items() %}<tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>{% endfor %}</table></div>
+<h2>Extension modules</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Extension modules"><table>{% for k,v in extensions.items() %}<tr><td><code>{{ k }}</code></td><td>{{ v }}</td></tr>{% endfor %}</table></div></div>
 {% endblock %}

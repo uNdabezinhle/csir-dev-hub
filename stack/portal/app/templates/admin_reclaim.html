@@ -1,14 +1,15 @@
-{% extends "base.html" %}{% block body %}
-<h1>Idle reclaim &amp; lifecycle</h1>{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
-<div class="card"><b>Policy</b>{% if can(user,'reclaim.run') %}<form method="post" action="/admin/reclaim/policy" class="row">
-<div><label>Stop running workspace after idle (min)</label><input name="idle_stop_minutes" type="number" value="{{ policy.idle_stop_minutes }}"></div>
-<div><label>Flag/delete stopped after (days)</label><input name="stopped_delete_days" type="number" value="{{ policy.stopped_delete_days }}"></div>
-<div><label>Guest workspace max age (days)</label><input name="guest_max_age_days" type="number" value="{{ policy.guest_max_age_days }}"></div>
-<div><label>Auto-apply every 10 min</label><select name="auto_apply"><option value="1" {% if policy.auto_apply %}selected{% endif %}>yes</option><option value="0" {% if not policy.auto_apply %}selected{% endif %}>no</option></select></div>
-<div><label>Allow deletes</label><select name="delete_enabled"><option value="0" {% if not policy.delete_enabled %}selected{% endif %}>no (flag only)</option><option value="1" {% if policy.delete_enabled %}selected{% endif %}>yes</option></select></div>
+{% extends "base.html" %}{% block title %}Idle reclaim &amp; lifecycle · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('Idle reclaim & lifecycle', 'Review the current policy and preview workspace lifecycle actions.') }}{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+<div class="card"><b>Policy</b>{% if can(user,'reclaim.run') %}<form method="post" action="/admin/reclaim/policy" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<div><label>Stop running workspace after idle (min)<input name="idle_stop_minutes" type="number" value="{{ policy.idle_stop_minutes }}"></label></div>
+<div><label>Flag/delete stopped after (days)<input name="stopped_delete_days" type="number" value="{{ policy.stopped_delete_days }}"></label></div>
+<div><label>Guest workspace max age (days)<input name="guest_max_age_days" type="number" value="{{ policy.guest_max_age_days }}"></label></div>
+<div><label>Auto-apply every 10 min<select name="auto_apply"><option value="1" {% if policy.auto_apply %}selected{% endif %}>yes</option><option value="0" {% if not policy.auto_apply %}selected{% endif %}>no</option></select></label></div>
+<div><label>Allow deletes<select name="delete_enabled"><option value="0" {% if not policy.delete_enabled %}selected{% endif %}>no (flag only)</option><option value="1" {% if policy.delete_enabled %}selected{% endif %}>yes</option></select></label></div>
 <button class="btn light">Save policy</button></form>{% else %}<pre>{{ policy }}</pre>{% endif %}
 <p class="muted">Also enforced by Coder itself: every portal-created workspace gets an 8 h autostop TTL, bumped by activity.</p></div>
-<h2>Dry run (what would happen now)</h2><div class="card"><table><tr><th>Workspace</th><th>Action</th><th>Reason</th></tr>
-{% for p in plan %}<tr><td>{{ p.ws.owner_name }}/{{ p.ws.name }}</td><td><span class="badge {{ p.action }}">{{ p.action }}</span></td><td>{{ p.reason }}</td></tr>{% else %}<tr><td colspan="3" class="muted">Nothing to reclaim.</td></tr>{% endfor %}</table>
-{% if can(user,'reclaim.run') and plan %}<form method="post" action="/admin/reclaim"><button class="btn red">Apply now</button></form>{% endif %}</div>
+<h2>Dry run (what would happen now)</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Dry run (what would happen now)"><table><tr><th>Workspace</th><th>Action</th><th>Reason</th></tr>
+{% for p in plan %}<tr><td>{{ p.ws.owner_name }}/{{ p.ws.name }}</td><td><span class="badge {{ p.action }}">{{ p.action }}</span></td><td>{{ p.reason }}</td></tr>{% else %}<tr><td colspan="3" class="muted">Nothing to reclaim.</td></tr>{% endfor %}</table></div>
+{% if can(user,'reclaim.run') and plan %}<form method="post" action="/admin/reclaim"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn red">Apply now</button></form>{% endif %}</div>
 {% endblock %}

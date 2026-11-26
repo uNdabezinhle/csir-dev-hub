@@ -31,7 +31,7 @@ and the bootstrap verifies that the default is rejected.
 
 1. The user clicks **Desktop (RDP)** on a running `ubuntu-desktop` workspace in the portal (`/workspaces/{id}/rdp`).
 2. The portal checks RBAC: the user must own the workspace or be hub-admin.
-3. The portal attaches `guacd` to the workspace's private bridge network `csir-ws-<owner>-<ws>` with the docker API.
+3. The portal asks the engine broker over its shared Unix socket to attach `guacd` to the workspace's private bridge network `csir-ws-<owner>-<ws>`.
    This is idempotent. guacd is the only extra member of that network.
 4. The portal mints a **guacamole-auth-json** token (HMAC-SHA256 signed, then AES-128-CBC encrypted with
    `GUAC_JSON_SECRET`). It expires after 5 minutes and holds one connection:
@@ -47,16 +47,16 @@ and the bootstrap verifies that the default is rejected.
 The workspace container publishes nothing on the host. `test-rdp.py` check 5 asserts that no container publishes 3389.
 
 ### Windows (KVM) connections
-For `windows-kvm` the hostname is the VM's address on the libvirt `isolated`/`windows-licensed` network. guacd must
-also be routed to that network: run guacd on the KVM host, or bridge it. Use `security=nla` with
-domain/AD credentials, and keep `ignore-cert=false` once AD CS issues RDP certificates.
+The bundled `windows-kvm` template uses the VM forwarding path below with NLA. Direct routing and enterprise
+certificate and directory integration are separate deployment options.
 
 ## Recording and playback
 - Files are written by guacd (uid 1000) into the `guac-recordings` volume. `bootstrap-guacamole.sh` chowns the volume.
 - `RECORDING_SEARCH_PATH` lets admins replay recordings in the Guacamole UI: Settings → History → Play.
   This applies to connections defined in the DB. Recordings from JSON-auth sessions sit in the same directory and
   can be converted with `guacenc` (to video) or kept as audit evidence.
-- Retention: add a cron job or the BackupProvider extension (annex audit retention). Planned.
+- Recording retention has no automated policy. Before production, assign a data owner and agree retention, access,
+  backup handling and deletion evidence. Track acceptance in the [upgrade runbook](upgrade-acceptance.md#production-readiness).
 
 ## Identity integration (MFA)
 - **Today:** portal users are already authenticated by Keycloak (LDAP plus forced TOTP) before the portal mints a
@@ -80,7 +80,7 @@ The JSON-auth approach is preferred: it creates no standing credentials and expi
 
 ## VM workspaces (libvirt)
 VMs live on libvirt networks inside the libvirt host (the `csir-devhub-libvirt-1` container on the PoC). guacd cannot
-join those networks, so the portal's `KvmProvider.rdp_forward()` sets up the path instead:
+join those networks, so the portal asks the engine broker to set up the path:
 - It adds an iptables DNAT `<libvirt-host>:<20000+hash> -> <vm-ip>:3389` on the libvirt host, accepted **only** from
   guacd's address, plus a matching FORWARD rule.
 - It hands Guacamole that host and port, together with the workspace's RDP credential (`rdp_password`, a sensitive

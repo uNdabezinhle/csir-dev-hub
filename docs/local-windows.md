@@ -67,9 +67,11 @@ python -m venv .venv; .\.venv\Scripts\python.exe -m pip install websocket-client
 powershell -ExecutionPolicy Bypass -File .\scripts\devhub.ps1 scripts/bootstrap-coder.py --create admin/demo-desktop:ubuntu-desktop
 $env:DOCKER_HOST = docker context inspect --format '{{.Endpoints.docker.Host}}'; .\.venv\Scripts\python.exe scripts\test-rdp.py demo-desktop
 ```
-Verified on the Technical Lead's laptop (Windows 11, Docker Desktop 8 GB cap, 2026-11-24): test-mfa 5/5,
+Historical PoC baseline on the Technical Lead's laptop (Windows 11, Docker Desktop 8 GB cap, 2026-11-24): test-mfa 5/5,
 test-portal 43/43 (F5-F7, K1-K3 skipped: no KVM / no backup yet), test-rdp 5/5; stack + demo-ubuntu + demo-desktop
 use ~2.7 GB of the 8 GB Docker Desktop VM.
+
+For the current release, repeat applicable checks and record the results using the [upgrade and acceptance runbook](upgrade-acceptance.md).
 
 Notes: Keycloak marks its cookies `Secure` on `http://localhost` (browsers accept that; the test scripts mimic it via
 `scripts/devhub_testlib.py`). The first `start-desktop.ps1` run takes ~30 min (image builds); later runs ~3 min.

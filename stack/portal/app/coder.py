@@ -2,7 +2,10 @@
 import httpx, secrets, string
 from .config import CODER_URL, CODER_TOKEN, CODER_PUBLIC_URL
 
-class CoderError(Exception): pass
+class CoderError(Exception):
+    def __init__(self, message, status=None):
+        super().__init__(message)
+        self.status = status
 
 def _c():
     return httpx.Client(base_url=CODER_URL, headers={"Coder-Session-Token": CODER_TOKEN}, timeout=30)
@@ -13,7 +16,7 @@ def req(method, path, **kw):
     if r.status_code >= 400:
         try: msg = r.json().get("message", r.text) + " " + str(r.json().get("detail", ""))
         except Exception: msg = r.text
-        raise CoderError(f"{method} {path} -> {r.status_code}: {msg.strip()[:400]}")
+        raise CoderError(f"{method} {path} -> {r.status_code}: {msg.strip()[:400]}", r.status_code)
     return r.json() if r.content else None
 
 def healthy():
@@ -61,20 +64,33 @@ def template_by_name(name):
 def template_params(template):
     t = template_by_name(template)
     if not t: return []
-    return req("GET", f"/api/v2/templateversions/{t['active_version_id']}/rich-parameters")
+    return version_params(t["active_version_id"])
+
+def version_params(version_id):
+    return req("GET", f"/api/v2/templateversions/{version_id}/rich-parameters")
 
 def workspaces(owner=None):
-    params = {"limit": 500}
+    params = {"limit": 100, "offset": 0}
     if owner: params["q"] = f"owner:{owner}"
-    return req("GET", "/api/v2/workspaces", params=params).get("workspaces", [])
+    result = []
+    while True:
+        page = req("GET", "/api/v2/workspaces", params=params)["workspaces"] or []
+        result.extend(page)
+        if len(page) < params["limit"]:
+            return result
+        params["offset"] += len(page)
 
 def workspace(ws_id):
     return req("GET", f"/api/v2/workspaces/{ws_id}")
 
-def create_workspace(owner, template, name, params, ttl_ms=None):
-    t = template_by_name(template)
-    if not t: raise CoderError(f"template '{template}' is not published in Coder")
-    body = {"template_id": t["id"], "name": name,
+def create_workspace(owner, template, name, params, ttl_ms=None, template_version_id=None):
+    if template_version_id:
+        selection = {"template_version_id": template_version_id}
+    else:
+        t = template_by_name(template)
+        if not t: raise CoderError(f"template '{template}' is not published in Coder")
+        selection = {"template_id": t["id"]}
+    body = {**selection, "name": name,
             "rich_parameter_values": [{"name": k, "value": str(v)} for k, v in params.items()]}
     if ttl_ms: body["ttl_ms"] = ttl_ms
     return req("POST", f"/api/v2/users/{owner}/workspaces", json=body)
@@ -82,9 +98,12 @@ def create_workspace(owner, template, name, params, ttl_ms=None):
 def build(ws_id, transition):
     return req("POST", f"/api/v2/workspaces/{ws_id}/builds", json={"transition": transition})
 
-def build_params(build_id):
+def build_params(build_id, strict=False):
     try: return {p["name"]: p["value"] for p in req("GET", f"/api/v2/workspacebuilds/{build_id}/parameters")}
-    except CoderError: return {}
+    except CoderError:
+        if strict:
+            raise
+        return {}
 
 def app_url(ws, slug):
     return f"{CODER_PUBLIC_URL}/@{ws['owner_name']}/{ws['name']}.main/apps/{slug}/"

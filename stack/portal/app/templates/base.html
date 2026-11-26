@@ -1,22 +1,90 @@
-<!doctype html><html><head><meta charset="utf-8"><title>{% block title %}CSIR Dev Hub{% endblock %}</title>
-<link rel="stylesheet" href="/static/style.css"></head><body>
-{% if user %}<header><div class="brand">CSIR <span>Software Development Hub</span></div>
-<nav>
- <a href="/">My workspaces</a>
- <a href="/projects">Projects</a>
- {% if can(user,'workspace.own') %}<a href="/secrets">Secrets</a>{% endif %}
- {% if can(user,'workspace.view_all') %}<a href="/admin/workspaces">All workspaces</a>{% endif %}
- {% if can(user,'users.view') %}<a href="/admin/users">Users</a>{% endif %}
- {% if can(user,'images.view') or can(user,'catalog.manage') %}<a href="/admin/images">Images</a>{% endif %}
- {% if can(user,'quotas.view') or can(user,'quotas.manage') %}<a href="/admin/quotas">Quotas</a>{% endif %}
- {% if can(user,'workspace.view_all') %}<a href="/admin/reclaim">Reclaim</a>{% endif %}
- {% if can(user,'licences.view') %}<a href="/admin/licences">Licences</a>{% endif %}
- {% if can(user,'finops.view') %}<a href="/admin/finops">FinOps</a> <a href="/admin/billing">Billing</a>{% endif %}
- {% if can(user,'kvm.view') or can(user,'health.view') %}<a href="/admin/kvm">KVM</a>{% endif %}
- {% if can(user,'audit.view') %}<a href="/admin/audit">Audit</a>{% endif %}
- {% if can(user,'health.view') %}<a href="/admin/health">Health</a>{% endif %}
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="icon" href="data:,">
+  <title>{% block title %}CSIR Dev Hub{% endblock %}</title>
+  <script src="/static/theme.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+  <script src="/static/portal.js" defer></script>
+</head>
+<body>
+{% from "components.html" import csrf, theme_picker with context %}
+{% macro nav_link(path, label, match_prefix=false) -%}
+  <a href="{{ path }}"{% if request.url.path == path or (match_prefix and request.url.path.startswith(path ~ '/')) %} aria-current="page"{% endif %}>{{ label }}</a>
+{%- endmacro %}
+{% macro navigation() %}
+<nav aria-label="Portal navigation">
+  <section class="nav-group">
+    <p>Workspace</p>
+    {{ nav_link('/', 'My workspaces') }}
+    {{ nav_link('/projects', 'Projects') }}
+    {% if can(user,'workspace.own') %}{{ nav_link('/secrets', 'Secrets') }}{% endif %}
+  </section>
+  {% if can(user,'workspace.view_all') or can(user,'users.view') or can(user,'images.view') or can(user,'catalog.manage') or can(user,'quotas.view') or can(user,'quotas.manage') or can(user,'licences.view') %}
+  <section class="nav-group">
+    <p>Administration</p>
+    {% if can(user,'workspace.view_all') %}{{ nav_link('/admin/workspaces', 'All workspaces') }}{% endif %}
+    {% if can(user,'users.view') %}{{ nav_link('/admin/users', 'Users') }}{% endif %}
+    {% if can(user,'images.view') or can(user,'catalog.manage') %}{{ nav_link('/admin/images', 'Images', true) }}{% endif %}
+    {% if can(user,'quotas.view') or can(user,'quotas.manage') %}{{ nav_link('/admin/quotas', 'Quotas') }}{% endif %}
+    {% if can(user,'licences.view') %}{{ nav_link('/admin/licences', 'Licences') }}{% endif %}
+  </section>
+  {% endif %}
+  {% if can(user,'workspace.view_all') or can(user,'finops.view') or can(user,'kvm.view') or can(user,'audit.view') or can(user,'health.view') %}
+  <section class="nav-group">
+    <p>Operations</p>
+    {% if can(user,'workspace.view_all') %}{{ nav_link('/admin/reclaim', 'Reclaim') }}{% endif %}
+    {% if can(user,'finops.view') %}{{ nav_link('/admin/finops', 'FinOps') }}{{ nav_link('/admin/billing', 'Billing') }}{% endif %}
+    {% if can(user,'kvm.view') or can(user,'health.view') %}{{ nav_link('/admin/kvm', 'KVM & backups') }}{% endif %}
+    {% if can(user,'audit.view') %}{{ nav_link('/admin/audit', 'Audit') }}{% endif %}
+    {% if can(user,'health.view') %}{{ nav_link('/admin/health', 'Health') }}{% endif %}
+  </section>
+  {% endif %}
 </nav>
-<div class="who">{{ user.full_name or user.username }} ({{ user.auth_source }})<br>
-{% for r in user.roles %}<span class="badge">{{ r }}</span>{% endfor %} <a href="/logout" style="color:#fff">Sign out</a></div></header>{% endif %}
-<main>{% if flash %}<div class="flash {{ flash.kind }}">{{ flash.msg }}</div>{% endif %}{% block body %}{% endblock %}</main>
-</body></html>
+{% endmacro %}
+{% macro brand() %}
+<a class="brand" href="{{ '/' if user else '/login' }}">
+  <span class="brand-mark">CSIR</span><span>Dev Hub<small>Software Development Hub</small></span>
+</a>
+{% endmacro %}
+<a class="skip-link" href="#main-content">Skip to content</a>
+{% if user %}
+<div class="portal-shell">
+  <aside class="sidebar">
+    {{ brand() }}
+    {{ navigation() }}
+  </aside>
+  <div class="portal-body">
+    <header class="topbar">
+      <span class="topbar-title">CSIR Software Development Hub</span>
+      <details class="mobile-nav" data-menu>
+        <summary class="btn light">Menu</summary>
+        <div class="menu-panel">{{ navigation() }}</div>
+      </details>
+      <details class="account-menu" data-menu>
+        <summary class="account-trigger">
+          <span class="avatar" aria-hidden="true">{{ (user.full_name or user.username)[:1]|upper }}</span>
+          <span>{{ user.full_name or user.username }}</span>
+        </summary>
+        <div class="menu-panel">
+          <p class="muted account-source">{{ user.auth_source|upper }} account</p>
+          <div class="roles">{% for role in user.roles %}<span class="badge">{{ role }}</span>{% endfor %}</div>
+          {{ theme_picker() }}
+          <form method="post" action="/logout">{{ csrf() }}<button class="btn light" type="submit">Sign out</button></form>
+        </div>
+      </details>
+    </header>
+{% else %}
+<div class="guest-shell">
+  <header class="guest-topbar">{{ brand() }}{{ theme_picker() }}</header>
+{% endif %}
+    <main id="main-content" tabindex="-1" class="{{ 'content' if user else 'guest-content' }}">
+      {% if flash %}<div class="flash {{ flash.kind }}" role="{{ 'alert' if flash.kind == 'err' else 'status' }}">{{ flash.msg }}</div>{% endif %}
+      {% block body %}{% endblock %}
+    </main>
+  {% if user %}</div>{% endif %}
+</div>
+</body>
+</html>

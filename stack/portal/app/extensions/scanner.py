@@ -6,7 +6,7 @@ hub-admins) review results and approve or reject a specific image *digest*. Publ
 no approved scan, or whose latest scan exceeds the critical-CVE threshold, is blocked (policy.json -> image_scanning,
 overridable at runtime by a hub-admin). A hub-admin may record a time-boxed risk acceptance instead of fixing CVEs."""
 import json, time, threading, logging, gzip, base64
-from .. import db, audit
+from .. import db, audit, engine
 from ..config import POLICY
 log = logging.getLogger("scanner")
 SEVS = ["CRITICAL", "HIGH", "MEDIUM", "LOW", "UNKNOWN"]
@@ -33,11 +33,8 @@ class ImageScanner:
             c.execute("UPDATE image_scans SET status='error', error='interrupted (portal restart)', finished_at=? WHERE status='running'", (time.time(),))
 
     # -------------------------------------------------------------- scanning
-    def _docker(self):
-        import docker; return docker.from_env()
-
     def image_id(self, image):
-        try: return self._docker().images.get(image).id
+        try: return engine.call("image-id", image=image)
         except Exception: return None
 
     def start_scan(self, image, actor, ip=""):
@@ -45,32 +42,14 @@ class ImageScanner:
         if not iid: raise ValueError(f"image '{image}' not found in the local Docker image store")
         with db.tx() as c:
             sid = c.execute("INSERT INTO image_scans(image,image_id,status,started_at,requested_by,scanner) VALUES (?,?,?,?,?,?)",
-                            (image, iid, "running", time.time(), actor, policy().get("trivy_image", "aquasec/trivy:0.76.2"))).lastrowid
+                            (image, iid, "running", time.time(), actor, engine.TRIVY_IMAGE)).lastrowid
         audit.log(actor, "image.scan", image, {"scan": sid, "image_id": iid[:19]}, ip)
-        threading.Thread(target=self._run, args=(sid, image, actor), daemon=True, name=f"scan-{sid}").start()
+        threading.Thread(target=self._run, args=(sid, image, iid), daemon=True, name=f"scan-{sid}").start()
         return sid
 
-    def _run(self, sid, image, actor):
-        p = policy()
+    def _run(self, sid, image, image_id):
         try:
-            cli = self._docker()
-            # Write the report to a file inside the container and copy it out: large JSON on stdout gets split by the
-            # Docker log driver (16 KB partial-line chunks) and arrives corrupted.
-            ctr = cli.containers.run(p.get("trivy_image", "aquasec/trivy:0.76.2"),
-                ["image", "--quiet", "--scanners", "vuln", "--format", "json", "--output", "/tmp/report.json", "--timeout", "20m", image],
-                volumes={"/var/run/docker.sock": {"bind": "/var/run/docker.sock", "mode": "ro"},
-                         p.get("cache_volume", "csir-devhub_trivy-cache"): {"bind": "/root/.cache/trivy", "mode": "rw"}},
-                detach=True, mem_limit=p.get("mem_limit", "1g"), labels={"org.csir.devhub.role": "image-scan"})
-            try:
-                rc = ctr.wait(timeout=1500).get("StatusCode", 1)
-                if rc != 0: raise RuntimeError(f"trivy exited {rc}: {ctr.logs(stdout=False, stderr=True).decode(errors='replace')[-300:]}")
-                import io, tarfile
-                stream, _ = ctr.get_archive("/tmp/report.json")
-                tf = tarfile.open(fileobj=io.BytesIO(b"".join(stream)))
-                rep = json.load(tf.extractfile(tf.getmembers()[0]))
-            finally:
-                try: ctr.remove(force=True)
-                except Exception: pass
+            rep = engine.call("scan", timeout=1600, image_id=image_id)
             self._store(sid, rep)
             r = self.scan(sid=sid)
             audit.log("scanner", "image.scan.result", image, {"scan": sid, **{k: r[k] for k in ("critical", "high", "medium", "low")}})
@@ -147,7 +126,8 @@ class ImageScanner:
         s = self.scan(image)
         if s["status"] != "done": return [f"image {image} has no completed vulnerability scan"]
         cur = self.image_id(image)
-        if cur and s["image_id"] != cur: v.append(f"image {image} was rebuilt after its last scan - re-scan it")
+        if not cur: return [f"image {image} could not be verified against the local image store"]
+        if s["image_id"] != cur: v.append(f"image {image} was rebuilt after its last scan - re-scan it")
         over = p.get("block_on_critical", True) and (s["critical"] or 0) > p.get("max_critical", 0)
         a = self.approval(image, s["image_id"])
         if p.get("require_approval", True) and not (a and a["decision"] == "approved"):

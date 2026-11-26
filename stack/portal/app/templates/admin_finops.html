@@ -1,10 +1,11 @@
-{% extends "base.html" %}{% block body %}
-<h1>FinOps &amp; capacity</h1><p class="muted">Illustrative unit costs derived from the hardware tier monthly cost (50% CPU / 50% RAM split, 730 h). Replace figures in <code>policy.json</code> with the Technical Annex costing.</p>
-<div class="card"><form method="post" action="/admin/finops" class="row"><div><label>Hardware tier</label><select name="tier">{% for k,t in tiers.items() %}<option value="{{ k }}" {% if k==tid %}selected{% endif %}>~{{ t.users }} users: {{ t.vcpu }} vCPU / {{ t.ram_gb }} GB / {{ t.storage_tb }} TB</option>{% endfor %}</select></div>
+{% extends "base.html" %}{% block title %}FinOps &amp; capacity · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('FinOps & capacity', 'Review the hardware tier, capacity and estimated running costs.') }}<p class="muted">Illustrative unit costs derived from the hardware tier monthly cost (50% CPU / 50% RAM split, 730 h). Replace figures in <code>policy.json</code> with the Technical Annex costing.</p>
+<div class="card"><form method="post" action="/admin/finops" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><div><label>Hardware tier<select name="tier">{% for k,t in tiers.items() %}<option value="{{ k }}" {% if k==tid %}selected{% endif %}>~{{ t.users }} users: {{ t.vcpu }} vCPU / {{ t.ram_gb }} GB / {{ t.storage_tb }} TB</option>{% endfor %}</select></label></div>
 {% if can(user,'*') %}<button class="btn light">Set active tier</button>{% endif %}</form>
 <p>Rates: {{ rates.currency }} {{ '%.3f'|format(rates.per_vcpu_hour) }} per vCPU-hour, {{ '%.3f'|format(rates.per_gb_hour) }} per GB-hour. Fair share per user: {{ cap.per_user_vcpu }} vCPU / {{ cap.per_user_ram }} GB.</p>
 <p>Allocated now: {{ cap.alloc_cpu }} vCPU ({{ cap.cpu_pct }}%), {{ cap.alloc_mem }} GB ({{ cap.mem_pct }}%) across {{ cap.workspaces }} workspaces.</p></div>
-<div class="grid"><div class="card"><h2>Per user (est. monthly, {{ finops.hours_per_month_with_autostop }} h with autostop)</h2><table><tr><th>User</th><th>WS</th><th>vCPU</th><th>GB</th><th>{{ rates.currency }}/mo</th></tr>
-{% for k,v in per_user.items() %}<tr><td>{{ k }}</td><td>{{ v.ws }}</td><td>{{ v.cpu }}</td><td>{{ v.mem }}</td><td>{{ '%.2f'|format(v.monthly) }}</td></tr>{% endfor %}</table></div>
-<div class="card"><h2>Per project</h2><table><tr><th>Project</th><th>Cost centre</th><th>WS</th><th>{{ rates.currency }}/mo</th></tr>{% for p in per_project %}<tr><td>{{ p.name }}</td><td>{{ p.cost_centre }}</td><td>{{ p.workspaces }}</td><td>{{ p.monthly }}</td></tr>{% endfor %}</table></div></div>
+<div class="grid"><div class="card"><h2>Per user (est. monthly, {{ finops.hours_per_month_with_autostop }} h with autostop)</h2><div class="table-scroll" tabindex="0" role="region" aria-label="FinOps &amp; capacity"><table><tr><th>User</th><th>WS</th><th>vCPU</th><th>GB</th><th>{{ rates.currency }}/mo</th></tr>
+{% for k,v in per_user.items() %}<tr><td>{{ k }}</td><td>{{ v.ws }}</td><td>{{ v.cpu }}</td><td>{{ v.mem }}</td><td>{{ '%.2f'|format(v.monthly) }}</td></tr>{% endfor %}</table></div></div>
+<div class="card"><h2>Per project</h2><div class="table-scroll" tabindex="0" role="region" aria-label="Per project"><table><tr><th>Project</th><th>Cost centre</th><th>WS</th><th>{{ rates.currency }}/mo</th></tr>{% for p in per_project %}<tr><td>{{ p.name }}</td><td>{{ p.cost_centre }}</td><td>{{ p.workspaces }}</td><td>{{ p.monthly }}</td></tr>{% endfor %}</table></div></div></div>
 {% endblock %}

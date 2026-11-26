@@ -22,17 +22,34 @@ B=${1:?usage: restore.sh <backup|latest> --verify | --restore <component> --yes}
 MODE=${1:-}; pass=0; fail=0
 ok(){ echo "PASS $*"; pass=$((pass+1)); }; ko(){ echo "FAIL $*"; fail=$((fail+1)); }
 q(){ docker exec $PG psql -U $PGUSER -d "$1" -Atc "$2" 2>/dev/null; }
+decrypt(){
+  local passphrase
+  passphrase=${BACKUP_PASSPHRASE:-$(envget BACKUP_PASSPHRASE secrets/devhub.env)}
+  [ -n "$passphrase" ] || { echo "BACKUP_PASSPHRASE is required" >&2; return 2; }
+  BP="$passphrase" openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BP -in "$1"
+}
 
 if [ "$MODE" = --verify ]; then
   echo "== verify $(basename "$B")"
-  python3 - "$B" <<'PY' && ok "R1 manifest: all file sha256 match" || ko "R1 manifest sha256 mismatch"
-import hashlib, json, os, sys
-d = sys.argv[1]; m = json.load(open(os.path.join(d, "manifest.json"))); bad = []
+  python3 - "$B" <<'PY' || { ko "R1 manifest verification failed"; exit 1; }
+import hashlib, json, pathlib, sys
+d = pathlib.Path(sys.argv[1]).resolve()
+m = json.loads((d / "manifest.json").read_text())
+bad = []
 for f, meta in m["files"].items():
-    h = hashlib.sha256(open(os.path.join(d, f), "rb").read()).hexdigest()
-    if h != meta["sha256"]: bad.append(f)
+    path = (d / f).resolve()
+    if not path.is_relative_to(d) or not path.is_file() or path.stat().st_size != meta["bytes"]:
+        bad.append(f)
+        continue
+    with path.open("rb") as stream:
+        digest = hashlib.sha256()
+        for chunk in iter(lambda: stream.read(1 << 20), b""):
+            digest.update(chunk)
+        if digest.hexdigest() != meta["sha256"]:
+            bad.append(f)
 print(f"   {len(m['files'])} files, created {m['created']}, git {m['git']}"); sys.exit(1 if bad else 0)
 PY
+  ok "R1 manifest: all file sha256 match"
   declare -A KEY=([coder]="users workspaces templates workspace_builds" [keycloak]="realm user_entity credential" [guacamole_db]="guacamole_entity guacamole_connection_history")
   for f in "$B"/postgres/*.dump; do
     db=$(basename "$f" .dump); s="restore_verify_${db}"
@@ -59,10 +76,10 @@ print(ic, *[f'{t}={c.execute(f\"select count(*) from {t}\").fetchone()[0]}' for 
   head -1 "$B/ldap/config.ldif" | grep -q '^dn: cn=config' && [ "$n_b" -gt 0 ] && ok "R4 LDAP LDIF: $n_b entries (live $n_l), cn=config present" || ko "R4 LDAP LDIF"
   nv=0; bad=""
   for v in "$B"/volumes/*.tar.gz; do [ -e "$v" ] || continue; nv=$((nv+1)); gzip -t "$v" && tar tzf "$v" >/dev/null || bad="$bad $(basename "$v")"; done
+  for v in "$B"/volumes/*.tar.gz.enc; do [ -e "$v" ] || continue; nv=$((nv+1)); decrypt "$v" | tar tzf - >/dev/null || bad="$bad $(basename "$v")"; done
   [ -z "$bad" ] && ok "R5 $nv volume archives readable" || ko "R5 corrupt volume archives:$bad"
   if [ -f "$B/config/secrets.tar.gz.enc" ]; then
-    PASS=$(envget BACKUP_PASSPHRASE secrets/devhub.env)
-    BP="$PASS" openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -pass env:BP -in "$B/config/secrets.tar.gz.enc" | tar tzf - | grep -c devhub.env >/dev/null \
+    decrypt "$B/config/secrets.tar.gz.enc" | tar tzf - | grep -c devhub.env >/dev/null \
       && ok "R6 secrets archive decrypts (AES-256, passphrase from BACKUP_PASSPHRASE)" || ko "R6 secrets archive decrypt"
   else tar tzf "$B/config/secrets.tar.gz" | grep -c devhub.env >/dev/null && ok "R6 secrets archive readable (unencrypted)" || ko "R6 secrets archive"; fi
   tar tzf "$B/config/config.tar.gz" | grep -c '^docker-compose.yml$' >/dev/null && ok "R7 config archive contains docker-compose.yml" || ko "R7 config archive"
@@ -92,7 +109,18 @@ if [ "$MODE" = --restore ]; then
     portal) docker cp -q "$B/portal/devhub.db" $PORTAL:/data/devhub.db && docker restart $PORTAL ;;
     ldap) docker stop $LDAP; docker run --rm --volumes-from $LDAP -v "$B/ldap":/b:ro --entrypoint sh osixia/openldap:1.5.0 -c \
             'rm -rf /var/lib/ldap/* && slapadd -n 1 -l /b/data.ldif && chown -R openldap:openldap /var/lib/ldap'; docker start $LDAP ;;
-    volume:*) v=${C#volume:}; docker run --rm -i -v "$v":/v alpine:3.20 sh -c 'rm -rf /v/* /v/.[!.]* 2>/dev/null; tar xzf - -C /v' < "$B/volumes/$v.tar.gz" ;;
+    volume:*) v=${C#volume:}
+      [[ "$v" =~ ^[a-zA-Z0-9][a-zA-Z0-9_.-]*$ ]] || { echo "Invalid volume name" >&2; exit 2; }
+      if [ -f "$B/volumes/$v.tar.gz.enc" ]; then
+        archive=$(mktemp -t devhub-volume.XXXXXXXX)
+        trap 'rm -f -- "$archive"' EXIT
+        decrypt "$B/volumes/$v.tar.gz.enc" > "$archive"
+      else
+        archive="$B/volumes/$v.tar.gz"
+      fi
+      gzip -t "$archive"
+      tar tzf "$archive" >/dev/null
+      docker run --rm -i -v "$v":/v alpine:3.20 sh -c 'rm -rf /v/* /v/.[!.]* 2>/dev/null; tar xzf - -C /v' < "$archive" ;;
     config) mkdir -p restore-config && tar xzf "$B/config/config.tar.gz" -C restore-config && echo "config extracted to ./restore-config (review, then copy)" ;;
     *) echo "unknown component $C"; exit 2 ;;
   esac

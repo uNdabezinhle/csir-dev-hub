@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # CSIR Dev Hub backup: PostgreSQL DBs (coder, keycloak, guacamole_db + roles), portal DB (SQLite), LDAP (slapcat),
 # Docker volumes (Coder home, Grafana, Guacamole recordings, Prometheus, workspace homes, secret volumes; VM disks with
-# --with-vms), and configuration (compose, .env, stack/, identity/, templates/) + secrets (encrypted when
-# BACKUP_PASSPHRASE is set in secrets/devhub.env). Writes manifest.json (sha256 per file) and $BACKUP_DIR/status.json
+# --with-vms), and configuration (compose, .env, stack/, identity/, templates/) + encrypted secrets.
+# Requires BACKUP_PASSPHRASE. Writes manifest.json (sha256 per file) and $BACKUP_DIR/status.json
 # (shown in the portal), then applies the retention policy.
 #   scripts/backup.sh [--with-vms] [--no-volumes] [--no-retention]
 # Env (.env): BACKUP_DIR (default /workspace/csir-backups), BACKUP_KEEP_DAILY (7), BACKUP_KEEP_WEEKLY (4)
@@ -16,6 +16,15 @@ KEEP_DAILY=${BACKUP_KEEP_DAILY:-$(envget BACKUP_KEEP_DAILY .env)}; KEEP_DAILY=${
 KEEP_WEEKLY=${BACKUP_KEEP_WEEKLY:-$(envget BACKUP_KEEP_WEEKLY .env)}; KEEP_WEEKLY=${KEEP_WEEKLY:-4}
 WITH_VMS=0; VOLUMES=1; RETENTION=1
 for a in "$@"; do case $a in --with-vms) WITH_VMS=1;; --no-volumes) VOLUMES=0;; --no-retention) RETENTION=0;; *) echo "unknown option $a"; exit 2;; esac; done
+PASS=${BACKUP_PASSPHRASE:-$(envget BACKUP_PASSPHRASE secrets/devhub.env)}
+if [ -z "$PASS" ] || ! command -v openssl >/dev/null; then
+  echo "Backup requires OpenSSL and BACKUP_PASSPHRASE" >&2
+  exit 2
+fi
+if [ -n "${RESTIC_REPOSITORY:-}" ] && ! command -v restic >/dev/null; then
+  echo "RESTIC_REPOSITORY is configured but restic is unavailable" >&2
+  exit 2
+fi
 PG=csir-devhub-postgres-1; LDAP=csir-devhub-openldap-1; PORTAL=csir-devhub-portal-1; P=csir-devhub
 STAMP=$(date +%Y%m%d-%H%M%S); DEST="$BACKUP_DIR/$STAMP"; T0=$(date +%s)
 umask 077; mkdir -p "$DEST"/{postgres,ldap,portal,volumes,config}; chmod 700 "$BACKUP_DIR" "$DEST"
@@ -32,7 +41,7 @@ PY
   docker cp -q "$BACKUP_DIR/status.json" csir-devhub-portal-1:/data/backup-status.json 2>/dev/null || true   # portal: Admin -> KVM/Backups
 }
 trap 'status status=failed finished_at="$(date "+%Y-%m-%d %H:%M %Z")" path="$DEST" detail="failed at line $LINENO"; log "FAILED (line $LINENO)"' ERR
-status status=running started_at="$(date '+%Y-%m-%d %H:%M %Z')" path="$DEST"
+status status=running started_at="$(date '+%Y-%m-%d %H:%M %Z')" path="$DEST" replication=unconfigured
 
 # ---- PostgreSQL (custom format, restorable per DB) + global roles
 PGUSER=coder
@@ -57,7 +66,12 @@ if [ $VOLUMES = 1 ]; then
   [ $WITH_VMS = 1 ] && vols="$vols ${P}_libvirt-data"
   for v in $vols; do
     log "volume $v"   # provisioner work dirs/terraform plugin caches are re-creatable -> excluded
-    docker run --rm -v "$v":/v:ro alpine:3.20 sh -c "tar czf - -C /v --exclude='./.cache/coder' . 2> >(grep -v 'socket ignored' >&2)" > "$DEST/volumes/$v.tar.gz"
+    if [[ "$v" == csir-secrets-* ]]; then
+      docker run --rm -v "$v":/v:ro alpine:3.20 tar czf - -C /v . |
+        BP="$PASS" openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BP -out "$DEST/volumes/$v.tar.gz.enc"
+    else
+      docker run --rm -v "$v":/v:ro alpine:3.20 sh -c "tar czf - -C /v --exclude='./.cache/coder' . 2> >(grep -v 'socket ignored' >&2)" > "$DEST/volumes/$v.tar.gz"
+    fi
   done
 fi
 
@@ -65,12 +79,7 @@ fi
 log "config"
 tar czf "$DEST/config/config.tar.gz" --exclude='.terraform' --exclude='__pycache__' --exclude='output-*' --exclude='packer_cache' --exclude='*.iso' --exclude='build-*.log' docker-compose*.yml .env .env.example stack identity templates scripts packer ops public.env 2>/dev/null || \
   tar czf "$DEST/config/config.tar.gz" --exclude='.terraform' --exclude='__pycache__' --exclude='output-*' --exclude='packer_cache' --exclude='*.iso' --exclude='build-*.log' docker-compose*.yml .env .env.example stack identity templates scripts packer ops
-PASS=$(envget BACKUP_PASSPHRASE secrets/devhub.env)
-if [ -n "$PASS" ]; then
-  tar czf - secrets | BP="$PASS" openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BP -out "$DEST/config/secrets.tar.gz.enc"
-else
-  tar czf "$DEST/config/secrets.tar.gz" secrets; log "WARN: BACKUP_PASSPHRASE not set - secrets archive is NOT encrypted"
-fi
+tar czf - secrets | BP="$PASS" openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BP -out "$DEST/config/secrets.tar.gz.enc"
 
 # ---- Manifest
 python3 - "$DEST" <<'PY'
@@ -87,6 +96,16 @@ json.dump({"created": time.strftime("%Y-%m-%dT%H:%M:%S%z"), "git": git, "files":
 PY
 SIZE=$(du -sh "$DEST" | cut -f1); EL=$(( $(date +%s) - T0 ))
 log "done: $DEST ($SIZE, ${EL}s)"
+
+if [ -n "${RESTIC_REPOSITORY:-}" ]; then
+  status replication=running
+  log "replicating encrypted backup with restic"
+  if ! restic backup --tag devhub --tag "devhub-$STAMP" "$DEST"; then
+    status status=failed replication=failed
+    exit 1
+  fi
+  status replication=ok
+fi
 
 # ---- Retention: newest backup per day for KEEP_DAILY days + newest per ISO week for KEEP_WEEKLY weeks
 if [ $RETENTION = 1 ]; then

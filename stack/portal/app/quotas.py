@@ -15,8 +15,13 @@ def effective_quota(user):
     best["source"] = "role default"
     return best
 
-def ledger(owner=None, project_id=None):
+def ledger(owner=None, project_id=None, include_pending=False):
     sql, args = "SELECT * FROM workspaces WHERE deleted_at IS NULL", []
+    if include_pending:
+        sql = """SELECT * FROM (
+            SELECT owner, project_id, cpu, mem_gb FROM workspaces WHERE deleted_at IS NULL
+            UNION ALL SELECT owner, project_id, cpu, mem_gb FROM workspace_requests
+        ) WHERE 1=1"""
     if owner: sql += " AND owner=?"; args.append(owner)
     if project_id: sql += " AND project_id=?"; args.append(project_id)
     return db.q(sql, args)
@@ -27,12 +32,12 @@ def usage(rows):
 def check(user, cpu, mem_gb, project=None):
     """Returns list of violations (empty = allowed). Allocation counts every non-deleted workspace (stopped ones keep storage/seat)."""
     v = []
-    q = effective_quota(user); u = usage(ledger(owner=user["username"]))
+    q = effective_quota(user); u = usage(ledger(owner=user["username"], include_pending=True))
     if u["workspaces"] + 1 > q["max_workspaces"]: v.append(f"workspace count {u['workspaces']+1} > quota {q['max_workspaces']}")
     if u["cpu"] + cpu > q["max_cpu"]: v.append(f"vCPU {u['cpu']+cpu} > quota {q['max_cpu']}")
     if u["mem_gb"] + mem_gb > q["max_mem_gb"]: v.append(f"memory {u['mem_gb']+mem_gb} GB > quota {q['max_mem_gb']} GB")
     if project:
-        pu = usage(ledger(project_id=project["id"]))
+        pu = usage(ledger(project_id=project["id"], include_pending=True))
         if project["max_workspaces"] and pu["workspaces"] + 1 > project["max_workspaces"]: v.append(f"project '{project['name']}' workspace quota {project['max_workspaces']} reached")
         if project["max_cpu"] and pu["cpu"] + cpu > project["max_cpu"]: v.append(f"project '{project['name']}' vCPU quota {project['max_cpu']} exceeded")
         if project["max_mem_gb"] and pu["mem_gb"] + mem_gb > project["max_mem_gb"]: v.append(f"project '{project['name']}' memory quota {project['max_mem_gb']} GB exceeded")

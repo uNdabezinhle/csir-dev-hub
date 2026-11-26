@@ -1,26 +1,27 @@
-{% extends "base.html" %}{% block body %}
-<h1>Licence broker</h1>
+{% extends "base.html" %}{% block title %}Licence broker · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('Licence broker', 'Review seat availability, allocations and entitlement limits.') }}
 <p class="muted">Seats are checked out when a workspace on a licensed profile is created (or started after a release-on-stop) and returned
 when it is deleted (portal, reclaim, or reconcile with Coder) or stopped if the pool releases on stop. Profile &rarr; pool:
 {% for prof,pl in profile_pool.items() %}<span class="badge">{{ prof }} &rarr; {{ pl }}</span>{% endfor %}</p>
-<h2>Seat pools</h2><div class="card"><table><tr><th>Pool</th><th>Product / activation</th><th>In use</th><th>Available</th><th>Cost / seat-month</th><th>Release on stop</th>{% if can(user,'*') %}<th>Resize</th>{% endif %}</tr>
+<h2>Seat pools</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Seat pools"><table><tr><th>Pool</th><th>Product / activation</th><th>In use</th><th>Available</th><th>Cost / seat-month</th><th>Release on stop</th>{% if can(user,'*') %}<th>Resize</th>{% endif %}</tr>
 {% for p in pools %}<tr><td><code>{{ p.id }}</code></td><td>{{ p.product }}<br><span class="muted">{{ p.activation }}{% if p.kms_host %} &middot; KMS {{ p.kms_host }}{% endif %}</span></td>
 <td><b>{{ p.used }}</b> / {{ p.seats }}</td><td>{% if p.available == 0 %}<span class="badge err">0</span>{% else %}<span class="badge ok">{{ p.available }}</span>{% endif %}</td>
 <td>{{ p.cost_per_seat_month }}</td><td>{{ 'yes' if p.release_on_stop else 'no' }}</td>
-{% if can(user,'*') %}<td><form class="row" method="post" action="/admin/licences/{{ p.id }}/resize"><input name="seats" type="number" min="0" value="{{ p.seats }}" style="width:70px"><button class="btn sm light">save</button></form></td>{% endif %}</tr>{% endfor %}</table></div>
-<h2>Checked-out seats</h2><div class="card"><table><tr><th>#</th><th>Pool</th><th>Kind</th><th>Workspace / note</th><th>User</th><th>Since</th><th>By</th>{% if can(user,'*') %}<th></th>{% endif %}</tr>
+{% if can(user,'*') %}<td><form class="row" method="post" action="/admin/licences/{{ p.id }}/resize"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="seats" type="number" min="0" value="{{ p.seats }}" style="width:70px"><button class="btn sm light">save</button></form></td>{% endif %}</tr>{% endfor %}</table></div></div>
+<h2>Checked-out seats</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Checked-out seats"><table><tr><th>#</th><th>Pool</th><th>Kind</th><th>Workspace / note</th><th>User</th><th>Since</th><th>By</th>{% if can(user,'*') %}<th></th>{% endif %}</tr>
 {% for s in seats %}<tr><td>{{ s.id }}</td><td>{{ s.pool }}</td><td>{{ s.kind }}</td><td>{{ s.workspace or s.note }}</td><td>{{ s.username or '-' }}</td><td>{{ s.checked_out_at|ts }}</td><td>{{ s.checked_out_by }}</td>
-{% if can(user,'*') %}<td><form class="inline" method="post" action="/admin/licences/return/{{ s.id }}"><button class="btn sm red">return</button></form></td>{% endif %}</tr>
-{% else %}<tr><td colspan="8" class="muted">No seats checked out</td></tr>{% endfor %}</table>
-{% if can(user,'*') %}<form method="post" action="/admin/licences/checkout" class="row" style="margin-top:10px">
-<div><label>Pool</label><select name="pool">{% for p in pools %}<option>{{ p.id }}</option>{% endfor %}</select></div>
-<div><label>User</label><select name="username">{% for u2 in users %}<option>{{ u2 }}</option>{% endfor %}</select></div>
-<div><label>Note (asset / ticket)</label><input name="note" required></div><button class="btn teal">Assign seat manually</button></form>{% endif %}</div>
-<h2>Quotas</h2><div class="card"><table><tr><th>Role</th>{% for r,n in role_seats.items() %}<th>{{ r }}</th>{% endfor %}</tr><tr><td>max seats / user</td>{% for r,n in role_seats.items() %}<td>{{ n }}</td>{% endfor %}</tr></table>
-<table style="margin-top:10px"><tr><th>Project</th><th>Cost centre</th><th>Max licence seats</th></tr>
-{% for p in projects %}<tr><td>{{ p.name }}</td><td>{{ p.cost_centre }}</td><td>{% if can(user,'*') %}<form class="row" method="post" action="/admin/licences/project/{{ p.id }}"><input name="max_licences" value="{{ p.max_licences if p.max_licences is not none else '' }}" placeholder="unlimited" style="width:90px"><button class="btn sm light">save</button></form>{% else %}{{ p.max_licences if p.max_licences is not none else 'unlimited' }}{% endif %}</td></tr>
-{% else %}<tr><td colspan="3" class="muted">No projects</td></tr>{% endfor %}</table></div>
-<h2>History</h2><div class="card"><table><tr><th>#</th><th>Pool</th><th>Workspace / note</th><th>User</th><th>Out</th><th>Returned</th><th>Reason</th></tr>
-{% for s in history %}<tr><td>{{ s.id }}</td><td>{{ s.pool }}</td><td>{{ s.workspace or s.note }}</td><td>{{ s.username or '-' }}</td><td>{{ s.checked_out_at|ts }}</td><td>{{ s.returned_at|ts }}</td><td>{{ s.return_reason or '' }}</td></tr>{% endfor %}</table>
+{% if can(user,'*') %}<td><form class="inline" method="post" action="/admin/licences/return/{{ s.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm red">return</button></form></td>{% endif %}</tr>
+{% else %}<tr><td colspan="8" class="muted">No seats checked out</td></tr>{% endfor %}</table></div>
+{% if can(user,'*') %}<form method="post" action="/admin/licences/checkout" class="row" style="margin-top:10px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<div><label>Pool<select name="pool">{% for p in pools %}<option>{{ p.id }}</option>{% endfor %}</select></label></div>
+<div><label>User<select name="username">{% for u2 in users %}<option>{{ u2 }}</option>{% endfor %}</select></label></div>
+<div><label>Note (asset / ticket)<input name="note" required></label></div><button class="btn teal">Assign seat manually</button></form>{% endif %}</div>
+<h2>Quotas</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Quotas"><table><tr><th>Role</th>{% for r,n in role_seats.items() %}<th>{{ r }}</th>{% endfor %}</tr><tr><td>max seats / user</td>{% for r,n in role_seats.items() %}<td>{{ n }}</td>{% endfor %}</tr></table></div>
+<div class="table-scroll" tabindex="0" role="region" aria-label="Quotas"><table><tr><th>Project</th><th>Cost centre</th><th>Max licence seats</th></tr>
+{% for p in projects %}<tr><td>{{ p.name }}</td><td>{{ p.cost_centre }}</td><td>{% if can(user,'*') %}<form class="row" method="post" action="/admin/licences/project/{{ p.id }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><input name="max_licences" value="{{ p.max_licences if p.max_licences is not none else '' }}" placeholder="unlimited" style="width:90px"><button class="btn sm light">save</button></form>{% else %}{{ p.max_licences if p.max_licences is not none else 'unlimited' }}{% endif %}</td></tr>
+{% else %}<tr><td colspan="3" class="muted">No projects</td></tr>{% endfor %}</table></div></div>
+<h2>History</h2><div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="History"><table><tr><th>#</th><th>Pool</th><th>Workspace / note</th><th>User</th><th>Out</th><th>Returned</th><th>Reason</th></tr>
+{% for s in history %}<tr><td>{{ s.id }}</td><td>{{ s.pool }}</td><td>{{ s.workspace or s.note }}</td><td>{{ s.username or '-' }}</td><td>{{ s.checked_out_at|ts }}</td><td>{{ s.returned_at|ts }}</td><td>{{ s.return_reason or '' }}</td></tr>{% endfor %}</table></div>
 <p class="muted">All checkouts, denials, returns and resizes are in the <a href="/admin/audit?action=licence">audit log</a>. JSON: <code>/api/licences</code></p></div>
 {% endblock %}

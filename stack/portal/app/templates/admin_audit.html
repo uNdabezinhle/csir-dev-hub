@@ -1,6 +1,7 @@
-{% extends "base.html" %}{% block body %}
-<h1>Audit log</h1><form class="row card" method="get"><div><label>Actor</label><input name="actor" value="{{ actor }}"></div><div><label>Action prefix</label><input name="action" value="{{ action }}" placeholder="workspace."></div>
+{% extends "base.html" %}{% block title %}Audit log · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('Audit log', 'Review portal events and export the current audit view.') }}<form class="row card" method="get"><div><label>Actor<input name="actor" value="{{ actor }}"></label></div><div><label>Action prefix<input name="action" value="{{ action }}" placeholder="workspace."></label></div>
 <button class="btn light">Filter</button><a class="btn" href="/admin/audit?format=csv&actor={{ actor }}&action={{ action }}">Export CSV</a></form>
-<div class="card"><table><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Detail</th><th>IP</th></tr>
-{% for r in rows %}<tr><td style="white-space:nowrap">{{ r.ts|ts }}</td><td>{{ r.actor }}</td><td><code>{{ r.action }}</code></td><td>{{ r.target }}</td><td><span class="badge {{ r.outcome }}">{{ r.outcome }}</span></td><td class="muted" style="max-width:420px;word-break:break-all">{{ r.detail }}</td><td>{{ r.ip }}</td></tr>{% endfor %}</table></div>
+<div class="card"><div class="table-scroll" tabindex="0" role="region" aria-label="Audit log"><table><tr><th>Time</th><th>Actor</th><th>Action</th><th>Target</th><th>Outcome</th><th>Detail</th><th>IP</th></tr>
+{% for r in rows %}<tr><td style="white-space:nowrap">{{ r.ts|ts }}</td><td>{{ r.actor }}</td><td><code>{{ r.action }}</code></td><td>{{ r.target }}</td><td><span class="badge {{ r.outcome }}">{{ r.outcome }}</span></td><td class="muted" style="max-width:420px;word-break:break-all">{{ r.detail }}</td><td>{{ r.ip }}</td></tr>{% endfor %}</table></div></div>
 {% endblock %}

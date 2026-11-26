@@ -38,7 +38,7 @@ Options, in order of preference:
 2. JetBrains Gateway with the Coder plugin (connects over SSH; nothing to add to the template).
 Air-gapped: mirror the module into an internal Terraform registry and pre-download IDE backends into the image.
 
-## 5. Linux desktops - Ubuntu Desktop template (next path)
+## 5. Linux desktops - Ubuntu Desktop template
 * `images/ubuntu-desktop`: XFCE + **xrdp** (3389) + TigerVNC + **noVNC** (6080) + code-server.
 * Access paths:
   * **Brokered RDP via Apache Guacamole** (portal "Desktop (RDP)" button; guacd joins the workspace network on demand; the
@@ -48,11 +48,11 @@ Air-gapped: mirror the module into an internal Terraform registry and pre-downlo
 * Alternatives evaluated: KasmVNC (registry module `kasmvnc`) - better image quality/clipboard than noVNC, drop-in later.
 
 ## 6. Windows desktops - KVM path
-* `/dev/kvm` is present on the PoC host (and passes through to containers), so real Windows VMs are technically possible.
+* The PoC host exposes `/dev/kvm`, but nested KVM has failed on that host. Windows acceptance requires a verified KVM host.
 * Path: libvirt/QEMU template (`templates/windows-kvm`, terraform `dmacvicar/libvirt`) or the `dockur/windows` container (QEMU+KVM
   inside Docker), RDP brokered through Guacamole; Coder registry modules `windows-rdp` (web RDP via Devolutions Gateway) and
   `local-windows-rdp` are alternatives.
 * The Coder agent runs inside the Windows guest (`os = "windows"`, init script via cloud-init/autounattend).
-* Licensing: the `windows-licensed` network profile + licence-seat pool in the portal (stub broker today).
+* The portal licence broker assigns seats for the `windows-licensed` profile. Production KMS activation still needs an approved KMS endpoint.
 * PoC constraint: the box has ~4-9 GB RAM free, so a Windows 11 VM (min 4 GB, realistic 8 GB) is not run here; see
   `docs/extending-kvm.md`.

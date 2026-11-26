@@ -1,6 +1,8 @@
 # Mapping to the Technical Annex (CSIR/DS/ICSC/SDL/2026/001/E)
 
 Built from the architecture summary supplied by the project. The annex PDF itself was not available to the build.
+The statuses below reflect the PoC evidence. Use the [upgrade and acceptance runbook](upgrade-acceptance.md) to record
+release-specific checks and track production prerequisites.
 Status meanings:
 - **Implemented:** running and verified on the PoC box.
 - **Partial:** code and pipeline exist, but the final step needs hardware this PoC box does not have (stated in the row).

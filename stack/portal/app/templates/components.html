@@ -1,0 +1,33 @@
+{% macro csrf() -%}
+<input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+{%- endmacro %}
+
+{% macro theme_picker() -%}
+<label class="theme-picker" data-theme-picker hidden>
+  Appearance
+  <select data-theme-select>
+    <option value="system">System</option>
+    <option value="light">Light</option>
+    <option value="dark">Dark</option>
+  </select>
+</label>
+{%- endmacro %}
+
+{% macro page_heading(title, description='') -%}
+<header class="page-heading">
+  <h1>{{ title }}</h1>
+  {% if description %}<p class="muted">{{ description }}</p>{% endif %}
+</header>
+{%- endmacro %}
+
+{% macro badge(value, variant=none) -%}
+<span class="badge {{ variant if variant is not none else value }}">{{ value }}</span>
+{%- endmacro %}
+
+{% macro quota(label, value, limit, unit='') -%}
+<section class="card quota-card">
+  <span class="muted">{{ label }}</span>
+  <div class="kpi">{{ value }} <span>/ {{ limit }}{{ unit }}</span></div>
+  <progress aria-label="{{ label }}" value="{{ value }}" max="{{ limit or 1 }}">{{ value }} of {{ limit }}</progress>
+</section>
+{%- endmacro %}

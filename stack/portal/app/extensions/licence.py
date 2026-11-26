@@ -85,7 +85,7 @@ class LicenseBroker:
         return v
 
     # ---------------------------------------------------------------- lifecycle
-    def checkout(self, pool_id, user, actor, workspace_id=None, workspace="", project=None, kind="workspace", note="", ip="", enforce=True):
+    def checkout(self, pool_id, user, actor, workspace_id=None, workspace="", project=None, kind="workspace", note="", ip="", enforce=True, request_name=None, request_id=None):
         with db.tx():   # serialises concurrent checkouts (db._lock is re-entrant)
             v = self.precheck(user if enforce else None, pool_id, project)
             if v:
@@ -97,6 +97,11 @@ class LicenseBroker:
                                    VALUES (?,?,?,?,?,?,?,?,?)""", (pool_id, kind, workspace_id, workspace, (user or {}).get("username"),
                                    (project or {}).get("id"), note, time.time(), actor))
                 sid = cur.lastrowid
+                if request_name:
+                    updated = c.execute("UPDATE workspace_requests SET seat_id=? WHERE owner=? AND name=? AND request_id IS ?",
+                                        (sid, user["username"], request_name, request_id))
+                    if not updated.rowcount:
+                        raise LicenceDenied("workspace reservation expired")
         audit.log(actor, "licence.checkout", workspace or note, {"pool": pool_id, "seat": sid, "kind": kind,
                   "user": (user or {}).get("username"), "used": self.used(pool_id)}, ip)
         return db.one("SELECT * FROM licence_seats WHERE id=?", (sid,))
@@ -114,15 +119,17 @@ class LicenseBroker:
         with db.tx() as c: c.execute("UPDATE licence_pools SET seats=?, updated_by=?, updated_at=? WHERE id=?", (seats, actor, time.time(), pool_id))
         audit.log(actor, "licence.pool.resize", pool_id, {"seats": seats, "in_use": self.used(pool_id)}, ip)
 
-    def reconcile(self, live, actor="licence-broker"):
+    def reconcile(self, live, actor="licence-broker", deleted=None):
         """Tie seats to the Coder workspace lifecycle. live = {ws_id: coder workspace}."""
         from .. import coder
         changed = []
         for s in self.open_seats():
             if s["kind"] != "workspace": continue
+            if db.one("SELECT 1 FROM workspace_requests WHERE seat_id=?", (s["id"],)): continue
             ws = live.get(s["workspace_id"])
             if ws is None:
-                changed.append(self.release(actor, "workspace deleted", seat_id=s["id"]))
+                if deleted is None or s["workspace_id"] in deleted:
+                    changed.append(self.release(actor, "workspace deleted", seat_id=s["id"]))
             elif (self.pool(s["pool"]) or {}).get("release_on_stop") and coder.ws_status(ws) == "stopped" and ws["latest_build"]["transition"] == "stop":
                 changed.append(self.release(actor, "workspace stopped (release_on_stop)", seat_id=s["id"]))
         return [c for c in changed if c]

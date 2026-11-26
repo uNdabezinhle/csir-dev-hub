@@ -1,0 +1,7 @@
+project_id,observed_at_utc,vcpu_hours,memory_gib_hours
+demo-alpha,2026-01-12T08:00:00Z,3.50,7.00
+demo-beta,2026-01-12T09:00:00Z,1.25,2.50
+demo-alpha,2026-01-13T08:15:00Z,4.00,8.00
+demo-gamma,2026-01-13T10:30:00Z,0.00,0.00
+demo-beta,2026-01-14T08:30:00Z,2.75,6.00
+demo-gamma,2026-01-14T11:00:00Z,0.50,1.50

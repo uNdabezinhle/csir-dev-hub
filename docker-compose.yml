@@ -137,6 +137,24 @@ services:
     mem_limit: 256m
     networks: [core]
 
+  engine-broker:
+    <<: *restart
+    image: csir-devhub/portal:local
+    build:
+      context: .
+      dockerfile: stack/portal/Dockerfile
+    command: ["uvicorn", "app.engine_broker:app", "--uds", "/run/devhub-engine/broker.sock", "--no-access-log"]
+    network_mode: none
+    healthcheck:
+      test: ["CMD", "python", "-c", "import socket; s=socket.socket(socket.AF_UNIX); s.connect('/run/devhub-engine/broker.sock'); s.close()"]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+    group_add: ["${DOCKER_GID}"]
+    volumes:
+      - /var/run/docker.sock:/var/run/docker.sock
+      - engine-socket:/run/devhub-engine
+
   portal:
     <<: *restart
     build:
@@ -145,14 +163,15 @@ services:
     image: csir-devhub/portal:local
     depends_on:
       coder: {condition: service_started}
+      engine-broker: {condition: service_healthy}
     ports: ["${ADMIN_CONSOLE_PORT}:8088"]
-    group_add: ["${DOCKER_GID}"]
     environment:
       HOST_IP: ${HOST_IP}
       CODER_URL: http://coder:3000
       CODER_PUBLIC_URL: http://${HOST_IP}:${CODER_PORT}
       CODER_SESSION_TOKEN: ${CODER_SESSION_TOKEN:-}
       PORTAL_PUBLIC_URL: http://${HOST_IP}:${ADMIN_CONSOLE_PORT}
+      PORTAL_LOCAL_URL: http://${HOST_IP}:${ADMIN_CONSOLE_PORT}
       OIDC_ISSUER_URL: ${OIDC_ISSUER_URL:-}
       PORTAL_OIDC_CLIENT_ID: devhub-portal
       PORTAL_OIDC_SECRET: ${PORTAL_OIDC_SECRET}
@@ -166,7 +185,7 @@ services:
       KEYCLOAK_PUBLIC_URL: http://${HOST_IP}:${KEYCLOAK_PORT}
       LIBVIRT_CONTAINER: csir-devhub-libvirt-1
     volumes:
-      - /var/run/docker.sock:/var/run/docker.sock
+      - engine-socket:/run/devhub-engine:ro
       - portal-data:/data
     mem_limit: 256m
     networks: [core]
@@ -183,3 +202,4 @@ volumes:
   prom-data:
   grafana-data:
   portal-data:
+  engine-socket:

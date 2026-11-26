@@ -11,3 +11,6 @@ WORKSPACES = Gauge("devhub_workspaces", "Workspaces by status and template", ["s
 COST_RATE = Gauge("devhub_estimated_cost_per_hour", "Estimated running cost per hour (policy currency)")
 ALLOC_CPU = Gauge("devhub_allocated_vcpu", "vCPU allocated to running workspaces")
 ALLOC_MEM = Gauge("devhub_allocated_mem_gb", "Memory (GB) allocated to running workspaces")
+RECONCILE_FAILURES = Counter("devhub_reconcile_failures_total", "Failed workspace reconciliation runs")
+RECONCILE_LAST_SUCCESS = Gauge("devhub_reconcile_last_success_timestamp_seconds", "Unix time of the last successful workspace reconciliation")
+RECONCILE_OK = Gauge("devhub_reconcile_ok", "Whether the most recent workspace reconciliation succeeded")

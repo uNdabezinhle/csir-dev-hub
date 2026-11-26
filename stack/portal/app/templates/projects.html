@@ -1,15 +1,16 @@
-{% extends "base.html" %}{% block body %}
-<h1>Projects</h1>
-<div class="card"><table><tr><th>Project</th><th>Owner</th><th>Cost centre</th><th>Members</th><th>Usage / quota</th><th>Est. monthly</th></tr>
-{% for p in projects %}<tr><td><b>{{ p.name }}</b></td><td>{{ p.owner }}</td><td>{{ p.cost_centre or '-' }}</td>
+{% extends "base.html" %}{% block title %}Projects · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('Projects', 'Review membership, resource usage and estimated costs.') }}
+<div class="card"><label class="table-filter" data-filter-controls hidden>Filter projects <input type="search" data-filter="projects-table-1"></label><div class="table-scroll" tabindex="0" role="region" aria-label="Projects"><table id="projects-table-1"><tr><th>Project</th><th>Owner</th><th>Cost centre</th><th>Members</th><th>Usage / quota</th><th>Est. monthly</th></tr>
+{% for p in projects %}<tr><td><b>{{ p.name }}</b><span class="cell-meta"><a href="/projects/{{ p.id }}/blueprints">Blueprints and requests</a></span></td><td>{{ p.owner }}</td><td>{{ p.cost_centre or '-' }}</td>
 <td>{% for m in p.members %}<span class="badge">{{ m }}</span>{% endfor %}
-{% if p.can_manage %}<form class="row" method="post" action="/projects/{{ p.id }}/members" style="margin-top:6px"><select name="username">{% for x in users %}<option>{{ x }}</option>{% endfor %}</select>
-<select name="op"><option value="add">add</option><option value="remove">remove</option></select><button class="btn sm light">apply</button></form>{% endif %}</td>
+{% if p.can_manage %}<form class="row" method="post" action="/projects/{{ p.id }}/members" style="margin-top:6px"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><label>Member <select name="username">{% for x in users %}<option>{{ x }}</option>{% endfor %}</select></label>
+<label>Action <select name="op"><option value="add">Add</option><option value="remove">Remove</option></select></label><button class="btn sm light" type="submit">Apply</button></form>{% endif %}</td>
 <td>{{ p.usage.workspaces }}/{{ p.max_workspaces }} ws &middot; {{ p.usage.cpu }}/{{ p.max_cpu }} vCPU &middot; {{ p.usage.mem_gb }}/{{ p.max_mem_gb }} GB</td>
-<td>{{ p.cost.currency }} {{ p.cost.monthly }}</td></tr>{% else %}<tr><td colspan="6" class="muted">No projects visible to you.</td></tr>{% endfor %}</table></div>
-{% if can(user,'projects.manage') %}<h2>New project</h2><div class="card"><form method="post" action="/projects" class="row">
-<div><label>Name</label><input name="name" required></div><div><label>Cost centre</label><input name="cost_centre"></div>
-<div><label>Max workspaces</label><input name="max_workspaces" type="number" value="10" style="width:80px"></div>
-<div><label>Max vCPU</label><input name="max_cpu" type="number" value="20" style="width:80px"></div>
-<div><label>Max RAM GB</label><input name="max_mem_gb" type="number" value="40" style="width:80px"></div><button class="btn teal">Create</button></form></div>{% endif %}
+<td>{{ p.cost.currency }} {{ p.cost.monthly }}</td></tr>{% else %}<tr><td colspan="6" class="muted">No projects visible to you.</td></tr>{% endfor %}</table></div></div>
+{% if can(user,'projects.manage') %}<h2>New project</h2><div class="card"><form method="post" action="/projects" class="row"><input type="hidden" name="csrf_token" value="{{ csrf_token }}">
+<div><label>Name<input name="name" required></label></div><div><label>Cost centre<input name="cost_centre"></label></div>
+<div><label>Max workspaces<input name="max_workspaces" type="number" value="10" style="width:80px"></label></div>
+<div><label>Max vCPU<input name="max_cpu" type="number" value="20" style="width:80px"></label></div>
+<div><label>Max RAM GB<input name="max_mem_gb" type="number" value="40" style="width:80px"></label></div><button class="btn teal">Create</button></form></div>{% endif %}
 {% endblock %}

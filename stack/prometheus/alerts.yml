@@ -1,6 +1,11 @@
 groups:
   - name: csir-devhub
     rules:
+      - alert: PortalReconciliationStale
+        expr: (devhub_reconcile_ok == 0) or (time() - devhub_reconcile_last_success_timestamp_seconds > 300)
+        for: 2m
+        labels: {severity: warning}
+        annotations: {summary: "Portal workspace reconciliation is failing or stale"}
       - alert: ServiceDown
         expr: up == 0
         for: 2m

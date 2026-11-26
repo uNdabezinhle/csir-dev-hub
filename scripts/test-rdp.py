@@ -18,7 +18,9 @@ class NoRedirect(urllib.request.HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl): return None
 jar = cookiejar()
 op = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar))
-op.open(f"{P}/login", urllib.parse.urlencode({"username": "admin", "password": S["CODER_ADMIN_PASSWORD"]}).encode()).read()
+with op.open(f"{P}/api/csrf") as response:
+    csrf = json.load(response)["token"]
+op.open(f"{P}/login", urllib.parse.urlencode({"username": "admin", "password": S["CODER_ADMIN_PASSWORD"], "csrf_token": csrf}).encode()).read()
 ws = next(w for w in json.loads(op.open(f"{P}/api/workspaces").read()) if w["name"] == name)
 nr = urllib.request.build_opener(urllib.request.HTTPCookieProcessor(jar), NoRedirect)
 try: nr.open(f"{P}/workspaces/{ws['id']}/rdp"); loc = ""

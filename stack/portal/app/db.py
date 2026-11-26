@@ -28,6 +28,22 @@ CREATE TABLE IF NOT EXISTS workspaces (
 CREATE TABLE IF NOT EXISTS audit (
   id INTEGER PRIMARY KEY AUTOINCREMENT, ts REAL, actor TEXT, action TEXT, target TEXT, detail TEXT, ip TEXT, outcome TEXT);
 CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+CREATE TABLE IF NOT EXISTS project_blueprints (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, name TEXT NOT NULL,
+  spec TEXT NOT NULL, created_by TEXT NOT NULL, created_at REAL NOT NULL,
+  UNIQUE(project_id, name));
+CREATE TABLE IF NOT EXISTS provisioning_evidence (
+  request_id TEXT PRIMARY KEY, blueprint_id INTEGER NOT NULL, record TEXT NOT NULL,
+  workspace_id TEXT UNIQUE);
+CREATE TABLE IF NOT EXISTS project_requests (
+  id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, kind TEXT NOT NULL,
+  subject TEXT NOT NULL, detail TEXT NOT NULL, requested_by TEXT NOT NULL, requested_at REAL NOT NULL,
+  status TEXT NOT NULL DEFAULT 'submitted', reviewed_by TEXT, reviewed_at REAL, review_note TEXT);
+CREATE TABLE IF NOT EXISTS workspace_requests (
+  owner TEXT NOT NULL, name TEXT NOT NULL, template TEXT NOT NULL, project_id INTEGER,
+  profile TEXT NOT NULL, cpu INTEGER NOT NULL, mem_gb INTEGER NOT NULL,
+  created_at REAL NOT NULL, submitted REAL NOT NULL DEFAULT 0, seat_id INTEGER, request_id TEXT,
+  PRIMARY KEY (owner, name));
 """
 
 def connect():
@@ -38,9 +54,11 @@ def connect():
 _conn = connect()
 
 @contextmanager
-def tx():
+def tx(immediate=False):
     with _lock:
         try:
+            if immediate:
+                _conn.execute("BEGIN IMMEDIATE")
             yield _conn
             _conn.commit()
         except Exception:
@@ -56,6 +74,9 @@ def one(sql, args=()):
 def init():
     with tx() as c:
         c.executescript(SCHEMA)
+        c.execute("BEGIN IMMEDIATE")
+        if "request_id" not in {row[1] for row in c.execute("PRAGMA table_info(workspace_requests)")}:
+            c.execute("ALTER TABLE workspace_requests ADD COLUMN request_id TEXT")
         for item in CATALOG_SEED:
             c.execute("INSERT OR IGNORE INTO catalog(template, data, published, updated_by, updated_at) VALUES (?,?,?,?,?)",
                       (item["template"], json.dumps(item), 1 if item.get("published") else 0, "seed", time.time()))

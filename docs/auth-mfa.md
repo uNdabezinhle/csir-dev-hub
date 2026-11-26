@@ -72,6 +72,14 @@ Demo LDAP users (password for all: `LDAP_DEMO_PASSWORD` in `secrets/devhub.env`)
 ## Remaining stubs / next
 * WebAuthn / passkeys (FIDO2) as an alternative second factor - planned (add `webauthn-authenticator` ALTERNATIVE to OTP).
 * LDAPS/StartTLS and AD-specific mappers - planned for production (PoC uses plain LDAP on an internal Docker network).
+
+## Portal browser sessions
+
+Public HTTPS sessions use cookies marked `Secure`. The explicitly configured LAN HTTP origin uses an HTTP-compatible
+cookie for local development. Set `PORTAL_LOCAL_URL` to the actual local portal origin when overriding the Compose
+defaults. Portal forms include a CSRF token, including local login and logout. Scripts should fetch `GET /api/csrf`
+with their cookie jar, then send the returned token in `X-CSRF-Token` or the `csrf_token` form field with the same
+cookie jar. This is separate from the Keycloak OIDC state and nonce checks.
 * Coder role/group sync from OIDC claims is a Coder Premium feature; in the OSS PoC the **portal** maps groups to Coder site
   roles via the API (hub-admin -> owner, image-publisher -> template-admin, auditor -> auditor) at portal login.
 * Local Coder `admin` / portal `admin` are break-glass accounts without MFA - restrict or remove in production

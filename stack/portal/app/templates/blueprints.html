@@ -1,0 +1,86 @@
+{% extends "base.html" %}
+{% from "components.html" import csrf, page_heading with context %}
+{% block title %}Project blueprints · CSIR Dev Hub{% endblock %}
+{% block body %}
+<p><a href="/projects">Projects</a>{% if selected %} / <a href="/projects/{{ project.id }}/blueprints">{{ project.name }}</a>{% endif %}</p>
+{{ page_heading(project.name ~ ' blueprints', 'Launch a workspace from a fixed project recipe and export its provisioning record.') }}
+<div class="grid">
+{% for recipe in recipes %}
+  {% set spec = recipe.spec %}
+  <section class="card">
+    <h2>{{ recipe.name }}</h2>
+    <p>{{ spec.template }} · {{ spec.cpu }} vCPU · {{ spec.memory }} GB · {{ spec.profile }}</p>
+    <p><a href="{{ spec.repository }}" rel="noreferrer">Source repository</a><span class="cell-meta">Commit <code>{{ spec.revision }}</code></span></p>
+    <details><summary>Environment details</summary>
+      <p>Coder template version <code>{{ spec.template_version_id }}</code></p>
+      <p>Catalog image observed at launch checks <code>{{ spec.catalog_image_id }}</code></p>
+    </details>
+    <p><a href="/projects/{{ project.id }}/blueprints?blueprint={{ recipe.id }}">Shareable blueprint link</a></p>
+    {% if can_launch %}
+    <form class="row" method="post" action="/workspaces">
+      {{ csrf() }}<input type="hidden" name="blueprint_id" value="{{ recipe.id }}"><input type="hidden" name="template" value="{{ spec.template }}">
+      <label>Workspace name <input name="name" required pattern="[a-z][a-z0-9\-]{1,30}[a-z0-9]"></label>
+      <button class="btn" type="submit">Launch workspace</button>
+    </form>
+    <p class="cell-meta">Check out the recorded commit after launch. Repository access is managed separately.</p>
+    {% endif %}
+    {% if recipe.records %}<details><summary>Provisioning records</summary><ul>
+      {% for record in recipe.records %}<li><a href="/api/projects/{{ project.id }}/evidence/{{ record.workspace_id }}">{{ record.owner }}/{{ record.name }} · JSON</a></li>{% endfor %}
+    </ul></details>{% endif %}
+  </section>
+{% else %}
+  <p class="card empty">This project has no blueprints yet.</p>
+{% endfor %}
+</div>
+{% if can_manage and not selected %}
+<h2>Save a new blueprint</h2>
+{% for option in options if option.allowed %}
+<details class="card template-card">
+  <summary>{{ option.display_name }}</summary>
+  <form class="row" method="post" action="/projects/{{ project.id }}/blueprints">
+    {{ csrf() }}<input type="hidden" name="template" value="{{ option.template }}">
+    <label>Blueprint name <input name="name" maxlength="80" required></label>
+    <label>Repository URL <input type="url" name="repository" required></label>
+    <label>Full Git commit ID <input name="revision" maxlength="64" required></label>
+    <label>Network profile <select name="profile">{% for profile in option.allowed %}<option>{{ profile }}</option>{% endfor %}</select></label>
+    <label>vCPU <input type="number" min="1" name="cpu" value="{{ option.default_cpu }}" required></label>
+    <label>Memory (GB) <input type="number" min="1" name="memory" value="{{ option.default_mem }}" required></label>
+    <button class="btn" type="submit">Save blueprint</button>
+  </form>
+</details>
+{% else %}
+<p class="card empty">No eligible container templates are published.</p>
+{% endfor %}
+{% endif %}
+{% if not selected %}
+<section id="project-requests">
+  <h2>Dataset, compute and support requests</h2>
+  <p class="muted">An operator can review your request. A review does not grant dataset access or reserve compute.</p>
+  {% if can_launch %}
+  <form class="card row" method="post" action="/projects/{{ project.id }}/requests">
+    {{ csrf() }}
+    <label>Request <select name="kind"><option value="dataset">Dataset access</option><option value="capacity">GPU or specialised VM</option><option value="support">Project support</option></select></label>
+    <label>Subject <input name="subject" maxlength="160" required></label>
+    <label>Details <textarea name="detail" maxlength="2000" required placeholder="Dataset ID and version, or compute size, duration and preferred dates. Do not include credentials."></textarea></label>
+    <button class="btn" type="submit">Submit request</button>
+  </form>
+  {% endif %}
+  {% for entry in project_requests %}
+  <article class="card">
+    <h3>{{ entry.subject }}</h3>
+    <p class="muted">{{ entry.kind|capitalize }} · {{ entry.status|capitalize }} · {{ entry.requested_by }}</p>
+    <p>{{ entry.detail }}</p>
+    {% if entry.review_note %}<p>Operator response: {{ entry.review_note }}</p>{% endif %}
+    {% if may_review and entry.status == 'submitted' %}
+    <form class="row" method="post" action="/projects/{{ project.id }}/requests/{{ entry.id }}/review">
+      {{ csrf() }}
+      <label>Outcome <select name="decision"><option value="reviewed">Reviewed</option><option value="declined">Declined</option></select></label>
+      <label>Response <textarea name="note" maxlength="2000" required></textarea></label>
+      <button class="btn" type="submit">Record review</button>
+    </form>
+    {% endif %}
+  </article>
+  {% else %}<p class="muted">No requests to show.</p>{% endfor %}
+</section>
+{% endif %}
+{% endblock %}

@@ -1,13 +1,18 @@
-{% extends "base.html" %}{% block body %}
-<h1>All workspaces</h1>{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
+{% extends "base.html" %}{% block title %}All workspaces · CSIR Dev Hub{% endblock %}{% block body %}
+{% from "components.html" import page_heading %}
+{{ page_heading('All workspaces', 'Inspect workspace status and manage lifecycle actions across the hub.') }}{% if error %}<div class="flash err">{{ error }}</div>{% endif %}
 <div class="grid"><div class="card"><div class="muted">Workspaces</div><div class="kpi">{{ rows|length }}</div></div>
 <div class="card"><div class="muted">Running</div><div class="kpi">{{ rows|selectattr('status','equalto','running')|list|length }}</div></div>
 <div class="card"><div class="muted">Allocated vs tier {{ cap.tier }} chassis</div><div>{{ cap.alloc_cpu }} / {{ cap.vcpu }} vCPU ({{ cap.cpu_pct }}%)</div>
 <div class="meter"><div style="width:{{ cap.cpu_pct }}%"></div></div><div>{{ cap.alloc_mem }} / {{ cap.ram_gb }} GB ({{ cap.mem_pct }}%)</div><div class="meter"><div style="width:{{ cap.mem_pct }}%"></div></div></div></div>
-<div class="card"><table><tr><th>Owner / name</th><th>Template</th><th>Status</th><th>Size</th><th>Profile</th><th>Project</th><th>Last used</th><th>Actions</th></tr>
+<div class="card"><label class="table-filter" data-filter-controls hidden>Filter workspaces <input type="search" data-filter="admin_workspaces-table-1"></label><div class="table-scroll" tabindex="0" role="region" aria-label="All workspaces"><table id="admin_workspaces-table-1"><tr><th>Owner / name</th><th>Template</th><th>Status</th><th>Size</th><th>Profile</th><th>Project</th><th>Last used</th><th>Actions</th></tr>
 {% for w in rows %}<tr><td>{{ w.owner }}/<b>{{ w.name }}</b></td><td>{{ w.template }}</td><td><span class="badge {{ w.status }}">{{ w.status }}</span> <span class="muted">agent {{ w.agent }}</span></td>
 <td>{{ w.cpu or '?' }} vCPU / {{ w.mem_gb or '?' }} GB</td><td><span class="badge">{{ w.profile }}</span></td><td>{{ projects.get(w.project_id, '-') }}</td><td>{{ w.last_used }}</td>
-<td>{% if can(user,'workspace.manage_all') %}{% for a in (['stop'] if w.status=='running' else ['start']) + ['delete'] %}<form class="inline" method="post" action="/workspaces/{{ w.id }}/{{ a }}" {% if a=='delete' %}onsubmit="return confirm('Delete?')"{% endif %}><button class="btn sm {{ 'red' if a=='delete' else 'light' }}">{{ a }}</button></form>{% endfor %}{% endif %}
-<a class="btn sm light" target="_blank" href="{{ w.coder_url }}">Coder</a></td></tr>{% endfor %}</table></div>
+<td>{% if can(user,'workspace.manage_all') %}
+<form class="inline" method="post" action="/workspaces/{{ w.id }}/{{ 'stop' if w.status=='running' else 'start' }}"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn sm light" type="submit">{{ 'Stop' if w.status=='running' else 'Start' }}</button></form>
+<details class="delete-confirm"><summary>Delete</summary><p>Delete <strong>{{ w.owner }}/{{ w.name }}</strong> and its home volume?</p><form method="post" action="/workspaces/{{ w.id }}/delete"><input type="hidden" name="csrf_token" value="{{ csrf_token }}"><button class="btn red sm" type="submit">Confirm delete</button></form></details>
+{% endif %}
+<a class="btn sm light" target="_blank" rel="noopener" href="{{ w.coder_url }}">Coder</a></td></tr>
+{% else %}<tr><td colspan="8" class="empty">No workspaces are available.</td></tr>{% endfor %}</table></div></div>
 <p class="muted">Live metrics: <a href="{{ GRAFANA }}/d/csir-devhub" target="_blank">Grafana dashboard</a></p>
 {% endblock %}

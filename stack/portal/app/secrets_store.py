@@ -1,8 +1,8 @@
 """Per-user secrets: stored encrypted (Fernet) in the portal DB and injected into workspaces as files on the
 user's read-only volume `csir-secrets-<user>` (mounted at /run/csir-secrets by every template)."""
-import io, tarfile, time, re, secrets as pysecrets, logging
+import time, re, secrets as pysecrets, logging
 from cryptography.fernet import Fernet
-from . import db
+from . import db, engine
 from .config import FERNET_KEY
 log = logging.getLogger("secrets")
 _f = Fernet(FERNET_KEY.encode()) if FERNET_KEY else None
@@ -35,23 +35,7 @@ def ensure_rdp_password(username):
 
 def sync(username):
     """Rewrite the user's secrets volume with all current secrets (files mode 0440, owned by uid 1000)."""
-    import docker
-    cli = docker.from_env()
-    vol = f"csir-secrets-{username}"
-    try: cli.volumes.get(vol)
-    except docker.errors.NotFound: cli.volumes.create(vol, labels={"org.csir.devhub": "secrets", "coder.owner": username})
-    buf = io.BytesIO()
-    with tarfile.open(fileobj=buf, mode="w") as tar:
-        for r in db.q("SELECT name, value_enc FROM secrets WHERE username=?", (username,)):
-            data = _f.decrypt(r["value_enc"].encode())
-            ti = tarfile.TarInfo(r["name"]); ti.size = len(data); ti.mode = 0o440; ti.uid = ti.gid = 1000; ti.mtime = time.time()
-            tar.addfile(ti, io.BytesIO(data))
-    buf.seek(0)
-    c = cli.containers.create("alpine:latest", command=["sh", "-c", "true"], volumes={vol: {"bind": "/s", "mode": "rw"}})
-    try:
-        c.start(); c.wait()
-        # clear then write fresh content
-        cli.containers.run("alpine:latest", ["sh", "-c", "rm -rf /s/* && chown 1000:1000 /s && chmod 0750 /s"], volumes={vol: {"bind": "/s", "mode": "rw"}}, remove=True)
-        c.put_archive("/s", buf.getvalue())
-    finally:
-        c.remove(force=True)
+    rows = db.q("SELECT name, value_enc FROM secrets WHERE username=?", (username,))
+    engine.call("sync-secrets", username=username, values={
+        row["name"]: _f.decrypt(row["value_enc"].encode()).decode() for row in rows
+    })

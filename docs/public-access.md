@@ -137,6 +137,10 @@ tunnel, or use the force option.`). Therefore:
   subdomains; with stable hostnames the full public mode (Keycloak SSO/MFA over the public URLs) becomes possible.
 
 ## Stable URLs: named tunnel (recommended beyond demos / on-prem)
+
+Confirm the tunnel serves the portal over HTTPS and the `devhub_session` cookie has the `Secure` attribute.
+Use the configured local portal URL for LAN HTTP testing. If a scripted portal POST returns 403, obtain a CSRF token
+using the same cookie jar and portal origin as the POST. See [Portal browser sessions](auth-mfa.md#portal-browser-sessions).
 Needs a Cloudflare account + a zone (e.g. `devhub.example.org`), same port-7844 egress.
 ```bash
 cloudflared tunnel login                         # browser auth, writes ~/.cloudflared/cert.pem

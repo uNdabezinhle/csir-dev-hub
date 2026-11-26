@@ -13,6 +13,15 @@ data "coder_provisioner" "me" {}
 data "coder_workspace" "me" {}
 data "coder_workspace_owner" "me" {}
 
+data "coder_parameter" "devhub_request_id" {
+  name         = "devhub_request_id"
+  display_name = "Dev Hub provisioning request ID"
+  description  = "Set by the Dev Hub portal. Leave blank when creating a workspace directly."
+  type         = "string"
+  default      = ""
+  mutable      = false
+}
+
 # ---------------------------------------------------------------- parameters
 data "coder_parameter" "ubuntu_version" {
   name         = "ubuntu_version"

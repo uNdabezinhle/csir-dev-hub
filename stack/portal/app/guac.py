@@ -5,7 +5,8 @@ import base64, hashlib, hmac, json, time, logging
 from urllib.parse import quote
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 from cryptography.hazmat.primitives import padding
-from .config import GUAC_JSON_SECRET, GUAC_PUBLIC_URL, GUACD_CONTAINER, GUAC_RECORDING
+from .config import GUAC_JSON_SECRET, GUAC_PUBLIC_URL, GUAC_RECORDING
+from . import engine
 log = logging.getLogger("guac")
 
 def _encrypt(payload: dict) -> str:
@@ -18,13 +19,7 @@ def _encrypt(payload: dict) -> str:
 
 def attach_guacd(network_name):
     """Connect guacd to the workspace network (idempotent)."""
-    import docker
-    cli = docker.from_env()
-    net = cli.networks.get(network_name)
-    g = cli.containers.get(GUACD_CONTAINER)
-    if network_name not in g.attrs["NetworkSettings"]["Networks"]:
-        net.connect(g)
-    return True
+    return engine.call("attach-guacd", network=network_name)
 
 def rdp_link(username, ws, hostname, rdp_password, network_name, ttl_s=300, port=3389, rdp_user="coder", security="any"):
     if network_name: attach_guacd(network_name)   # VM workspaces: reached via the libvirt port-forward on the core network

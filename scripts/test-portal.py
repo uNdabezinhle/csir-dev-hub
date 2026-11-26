@@ -27,6 +27,9 @@ def get(op, url):
     try: r = op.open(url); return r.status, r.read().decode(errors="ignore"), r.geturl()
     except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="ignore"), url
 def post(op, url, data):
+    if url.startswith(P + "/"):
+        with op.open(f"{P}/api/csrf") as response:
+            data = {**data, "csrf_token": json.load(response)["token"]}
     try: r = op.open(url, urllib.parse.urlencode(data, doseq=True).encode()); return r.status, r.read().decode(errors="ignore"), r.geturl()
     except urllib.error.HTTPError as e: return e.code, e.read().decode(errors="ignore"), url
 def totp(secret):
@@ -158,8 +161,9 @@ if KVM:
     check("F5 create on windows-licensed checks out a seat tied to the workspace", bool(wsa) and kms_used() == u0 + 1, flashes(b))
     if wsa:
         time.sleep(10); post(adm, f"{P}/workspaces/{wsa['id']}/delete", {})
-        check("F6 portal delete returns the seat", kms_used() == u0, kms_used())
-        wait_ws_gone(wsa["id"])
+        gone = wait_ws_gone(wsa["id"])
+        post(adm, f"{P}/admin/reconcile", {})
+        check("F6 confirmed portal deletion returns the seat", gone and kms_used() == u0, kms_used())
     st, b, _ = post(adm, f"{P}/workspaces", {"template": "windows-kvm", "name": "e2e-win-b", "cpu": 2, "memory": 4, "profile": "windows-licensed"})
     wsb = next((w for w in json.loads(get(adm, f"{P}/api/workspaces")[1]) if w["name"] == "e2e-win-b"), None)
     if wsb:
