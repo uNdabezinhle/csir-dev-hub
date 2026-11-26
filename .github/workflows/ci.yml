@@ -80,6 +80,10 @@ jobs:
       - name: Portal behavioral tests
         working-directory: stack/portal
         run: python -m unittest discover -s tests -v
+      - name: Research pilot reproducibility
+        run: |
+          python -m unittest discover -s pilots/research-usage -p 'test_*.py' -v
+          python pilots/research-usage/summarize_usage.py --expected-commit "$(git rev-parse HEAD)"
       - name: Build images (no push)
         run: |
           docker build -f stack/portal/Dockerfile -t csir-devhub/portal:ci .

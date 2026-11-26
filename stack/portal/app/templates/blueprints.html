@@ -24,9 +24,41 @@
     </form>
     <p class="cell-meta">Check out the recorded commit after launch. Repository access is managed separately.</p>
     {% endif %}
-    {% if recipe.records %}<details><summary>Provisioning records</summary><ul>
-      {% for record in recipe.records %}<li><a href="/api/projects/{{ project.id }}/evidence/{{ record.workspace_id }}">{{ record.owner }}/{{ record.name }} · JSON</a></li>{% endfor %}
-    </ul></details>{% endif %}
+    {% if recipe.records %}
+    <details{% if selected %} id="provisioning-records" open{% endif %}>
+      <summary>Provisioning and execution records</summary>
+      {% set check = recipe.comparison %}
+      {% if check.state == 'match' %}
+        <p class="flash ok">{{ check.participants }} participants submitted matching commits, input hashes, and results.</p>
+      {% elif check.state == 'different' %}
+        <p class="flash err">The submitted records differ. Compare their commits, input hashes, and results.</p>
+      {% elif check.state == 'waiting' %}
+        <p class="muted">Waiting for a record from a second participant.</p>
+      {% else %}
+        <p class="muted">No execution records have been attached yet.</p>
+      {% endif %}
+      <p class="cell-meta">Participants submit these unsigned records. Matching values do not prove where or how a report ran.</p>
+      <ul>
+      {% for record in recipe.records %}
+        <li>
+          <strong>{{ record.owner }}/{{ record.name }}</strong>
+          <a href="/api/projects/{{ project.id }}/evidence/{{ record.workspace_id }}">Provisioning JSON</a>
+          {% if record.execution %}
+            <a href="/api/projects/{{ project.id }}/evidence/{{ record.workspace_id }}/execution">Execution JSON</a>
+            <span class="cell-meta">Submitted {{ record.submitted_at|ts }} · {{ record.execution.summary.totals.vcpu_hours }} vCPU-hours · {{ record.execution.summary.totals.memory_gib_hours }} memory GiB-hours</span>
+          {% elif record.owner == user.username %}
+            <form class="row" method="post" enctype="multipart/form-data" action="/projects/{{ project.id }}/workspaces/{{ record.workspace_id }}/execution-record">
+              {{ csrf() }}<label>Execution record <input type="file" name="receipt" accept=".json,application/json" required></label>
+              <button class="btn light sm" type="submit">Attach JSON</button>
+            </form>
+          {% else %}
+            <span class="cell-meta">Awaiting participant submission</span>
+          {% endif %}
+        </li>
+      {% endfor %}
+      </ul>
+    </details>
+    {% endif %}
   </section>
 {% else %}
   <p class="card empty">This project has no blueprints yet.</p>

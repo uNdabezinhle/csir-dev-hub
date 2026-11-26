@@ -1,3 +1,5 @@
+import hashlib
+import json
 import os
 import shutil
 import tempfile
@@ -21,7 +23,7 @@ if not (_config / "roles.json").exists():
 os.environ["PORTAL_CONFIG_DIR"] = str(_config)
 os.environ["PORTAL_DATA_DIR"] = str(Path(_sandbox.name) / "data")
 
-from app import blueprints, browser_security, coder, db, main, provisioning, reclaim
+from app import blueprints, browser_security, coder, db, execution_records, main, provisioning, reclaim
 from app.engine_broker import app as broker
 from app.extensions.licence import LicenseBroker
 from app.extensions.scanner import ImageScanner
@@ -30,6 +32,16 @@ from app.extensions.scanner import ImageScanner
 def tearDownModule():
     db._conn.close()
     _sandbox.cleanup()
+
+
+def pilot_receipt(commit="a" * 40):
+    totals = {"vcpu_hours": "1.00", "memory_gib_hours": "2.00"}
+    summary = {"dataset_version": "workspace-usage-v1", "totals": totals,
+               "projects": [{"project_id": "demo-alpha", **totals}]}
+    encoded = json.dumps(summary, sort_keys=True, separators=(",", ":")).encode()
+    return {"schema_version": 1, "source_commit": commit, "inputs": {
+        "workspace-usage-v1.csv": "1" * 64, "expected-summary.json": "2" * 64, "summarize_usage.py": "3" * 64,
+    }, "summary_sha256": hashlib.sha256(encoded).hexdigest(), "summary": summary}
 
 
 class ProvisioningTests(unittest.TestCase):
@@ -164,6 +176,25 @@ class BrokerTests(unittest.TestCase):
 
 
 class ControlTests(unittest.TestCase):
+    def test_execution_record_validation_and_comparison(self):
+        record = pilot_receipt()
+        self.assertEqual(execution_records.parse(json.dumps(record).encode(), "a" * 40), record)
+        for invalid in (
+            pilot_receipt("b" * 40),
+            {**record, "summary_sha256": "0" * 64},
+            {**record, "summary": {**record["summary"], "totals": {"vcpu_hours": "0.00", "memory_gib_hours": "2.00"}}},
+        ):
+            with self.assertRaises(ValueError):
+                execution_records.parse(json.dumps(invalid).encode(), "a" * 40)
+        with self.assertRaises(ValueError):
+            execution_records.parse(b"x" * (execution_records.MAX_BYTES + 1), "a" * 40)
+        first = {"owner": "alpha", "execution": record}
+        self.assertEqual(execution_records.comparison([first, first])["state"], "waiting")
+        second = {"owner": "beta", "execution": record}
+        self.assertEqual(execution_records.comparison([first, second])["state"], "match")
+        other = {**record, "inputs": {**record["inputs"], "workspace-usage-v1.csv": "4" * 64}}
+        self.assertEqual(execution_records.comparison([first, {"owner": "beta", "execution": other}])["differences"], ["inputs"])
+
     def test_blueprint_source_requires_full_commit_and_credential_free_https(self):
         repository = "https://git.example.test/research/pilot"
         self.assertEqual(blueprints.parse_source(repository, "A" * 40), (repository, "a" * 40))
@@ -219,6 +250,24 @@ class ControlTests(unittest.TestCase):
             self.assertEqual(evidence["recipe"]["revision"], "a" * 40)
             self.assertEqual(evidence["coder_confirmation"]["build_id"], "build")
 
+            upload_path = f"/projects/{pid}/workspaces/{workspace['id']}/execution-record"
+            receipt = pilot_receipt()
+            files = {"receipt": ("execution-record.json", json.dumps(receipt), "application/json")}
+            self.assertEqual(client.post(upload_path, files=files).status_code, 403)
+            self.assertEqual(client.post(upload_path, files=files, headers=headers, follow_redirects=False).status_code, 303)
+            self.assertEqual(client.post(upload_path, files=files, data={"csrf_token": token},
+                                         follow_redirects=False).status_code, 303)
+            changed = {**receipt, "inputs": {**receipt["inputs"], "summarize_usage.py": "4" * 64}}
+            self.assertEqual(client.post(upload_path, files={"receipt": ("record.json", json.dumps(changed))},
+                                         headers=headers, follow_redirects=False).status_code, 303)
+            self.assertEqual(client.get(evidence_path + "/execution").json(), receipt)
+            self.assertIn("Waiting for a record from a second participant", client.get(path).text)
+            with db.tx() as conn:
+                conn.execute("INSERT INTO project_members VALUES (?,?)", (pid, "other-member"))
+            actor.return_value = {**outsider, "username": "other-member"}
+            self.assertEqual(client.post(upload_path, files=files, headers=headers).status_code, 403)
+            actor.return_value = admin
+
             submission = {"kind": "dataset", "subject": "Pilot dataset", "detail": "Approved version needed"}
             self.assertEqual(client.post(f"/projects/{pid}/requests", data=submission, headers=headers,
                                          follow_redirects=False).status_code, 303)
@@ -226,6 +275,7 @@ class ControlTests(unittest.TestCase):
             review = f"/projects/{pid}/requests/{request_id}/review"
             actor.return_value = outsider
             self.assertEqual(client.get(evidence_path).status_code, 404)
+            self.assertEqual(client.get(evidence_path + "/execution").status_code, 404)
             self.assertEqual(client.post(f"/projects/{pid}/requests", data=submission, headers=headers).status_code, 404)
             self.assertEqual(client.post(review, data={"decision": "reviewed", "note": "Recorded"}, headers=headers).status_code, 403)
             actor.return_value = admin

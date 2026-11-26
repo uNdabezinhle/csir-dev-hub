@@ -6,7 +6,7 @@ import csv, io, json, logging, re, threading, time
 from sqlite3 import IntegrityError
 from typing import Annotated
 from uuid import uuid4
-from fastapi import Depends, FastAPI, Request, Form, HTTPException
+from fastapi import Depends, FastAPI, File, Form, HTTPException, Request, UploadFile
 from fastapi.responses import RedirectResponse, HTMLResponse, PlainTextResponse, JSONResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -16,7 +16,7 @@ from . import db, auth, rbac, coder, quotas, reclaim, audit, guac, secrets_store
 from .config import (POLICY, ROLE_IDS, HEALTH_TARGETS, CODER_PUBLIC_URL, GRAFANA_PUBLIC_URL, KEYCLOAK_PUBLIC_URL,
                      GUAC_PUBLIC_URL, HOST_IP)
 from .metrics import LOGINS, WS_ACTIONS, QUOTA_DENIALS, USERS, WORKSPACES, COST_RATE, ALLOC_CPU, ALLOC_MEM
-from . import blueprints, engine, provisioning
+from . import blueprints, engine, execution_records, provisioning
 from .browser_security import PortalSessions, csrf_token, verify_csrf
 from .metrics import RECONCILE_FAILURES, RECONCILE_LAST_SUCCESS, RECONCILE_OK
 from .extensions import get as ext
@@ -429,6 +429,7 @@ def project_blueprints(request: Request, pid: int, blueprint: int | None = None)
             raise HTTPException(404)
     for recipe in recipes:
         recipe["records"] = blueprints.records(recipe["id"])
+        recipe["comparison"] = execution_records.comparison(recipe["records"])
     can_manage = rbac.can(user, "*") or (rbac.can(user, "projects.manage") and project["owner"] == user["username"])
     options = [dict(item, allowed=allowed_profiles(user, item)) for item in catalog_items(user)
                if item.get("kind") == "container" and item.get("image")]
@@ -490,6 +491,59 @@ def project_evidence(request: Request, pid: int, workspace_id: str):
     if not row:
         raise HTTPException(404)
     return JSONResponse({**json.loads(row["record"]), "workspace_id": workspace_id}, headers={"Cache-Control": "no-store"})
+
+
+@app.post("/projects/{pid}/workspaces/{workspace_id}/execution-record")
+def upload_execution_record(request: Request, pid: int, workspace_id: str, receipt: UploadFile = File(...)):
+    user = need(request)
+    _blueprint_project(user, pid)
+    workspace = db.one(
+        """SELECT b.id AS blueprint_id, e.record, w.owner FROM provisioning_evidence e
+           JOIN project_blueprints b ON b.id=e.blueprint_id JOIN workspaces w ON w.id=e.workspace_id
+           WHERE b.project_id=? AND e.workspace_id=?""", (pid, workspace_id),
+    )
+    if not workspace:
+        raise HTTPException(404)
+    if workspace["owner"] != user["username"]:
+        raise HTTPException(403)
+    target = f"/projects/{pid}/blueprints?blueprint={workspace['blueprint_id']}#provisioning-records"
+    expected_commit = json.loads(workspace["record"])["recipe"]["revision"]
+    try:
+        record = execution_records.parse(receipt.file.read(execution_records.MAX_BYTES + 1), expected_commit)
+    except ValueError as error:
+        flash(request, str(error), "err")
+        return RedirectResponse(target, 303)
+    canonical = json.dumps(record, sort_keys=True, separators=(",", ":"))
+    with db.tx(immediate=True) as conn:
+        existing = db.one("SELECT record FROM workspace_execution_records WHERE workspace_id=?", (workspace_id,))
+        if existing:
+            if existing["record"] != canonical:
+                flash(request, "This workspace already has an execution record. Launch a new workspace for a different run.", "err")
+            else:
+                flash(request, "This execution record is already attached")
+            return RedirectResponse(target, 303)
+        conn.execute(
+            """INSERT INTO workspace_execution_records(workspace_id,record,submitted_by,submitted_at)
+               VALUES (?,?,?,?)""", (workspace_id, canonical, user["username"], time.time()),
+        )
+    audit.log(user["username"], "project.execution.attach", workspace_id, {"project_id": pid}, ip(request))
+    flash(request, "Execution record attached")
+    return RedirectResponse(target, 303)
+
+
+@app.get("/api/projects/{pid}/evidence/{workspace_id}/execution")
+def project_execution_record(request: Request, pid: int, workspace_id: str):
+    _blueprint_project(need(request), pid)
+    row = db.one(
+        """SELECT x.record FROM workspace_execution_records x
+           JOIN provisioning_evidence e ON e.workspace_id=x.workspace_id
+           JOIN project_blueprints b ON b.id=e.blueprint_id
+           WHERE b.project_id=? AND x.workspace_id=?""", (pid, workspace_id),
+    )
+    if not row:
+        raise HTTPException(404)
+    return JSONResponse(json.loads(row["record"]), headers={"Cache-Control": "no-store",
+                        "Content-Disposition": 'attachment; filename="execution-record.json"'})
 
 
 @app.post("/projects/{pid}/requests")

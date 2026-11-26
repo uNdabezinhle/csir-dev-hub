@@ -35,6 +35,8 @@ CREATE TABLE IF NOT EXISTS project_blueprints (
 CREATE TABLE IF NOT EXISTS provisioning_evidence (
   request_id TEXT PRIMARY KEY, blueprint_id INTEGER NOT NULL, record TEXT NOT NULL,
   workspace_id TEXT UNIQUE);
+CREATE TABLE IF NOT EXISTS workspace_execution_records (
+  workspace_id TEXT PRIMARY KEY, record TEXT NOT NULL, submitted_by TEXT NOT NULL, submitted_at REAL NOT NULL);
 CREATE TABLE IF NOT EXISTS project_requests (
   id INTEGER PRIMARY KEY AUTOINCREMENT, project_id INTEGER NOT NULL, kind TEXT NOT NULL,
   subject TEXT NOT NULL, detail TEXT NOT NULL, requested_by TEXT NOT NULL, requested_at REAL NOT NULL,

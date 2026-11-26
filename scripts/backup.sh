@@ -67,7 +67,7 @@ if [ $VOLUMES = 1 ]; then
   for v in $vols; do
     log "volume $v"   # provisioner work dirs/terraform plugin caches are re-creatable -> excluded
     if [[ "$v" == csir-secrets-* ]]; then
-      docker run --rm -v "$v":/v:ro alpine:3.20 tar czf - -C /v . |
+      docker run --rm -v "$v":/v:ro alpine:3.20 sh -c 'tar czf - -C /v .' |
         BP="$PASS" openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt -pass env:BP -out "$DEST/volumes/$v.tar.gz.enc"
     else
       docker run --rm -v "$v":/v:ro alpine:3.20 sh -c "tar czf - -C /v --exclude='./.cache/coder' . 2> >(grep -v 'socket ignored' >&2)" > "$DEST/volumes/$v.tar.gz"

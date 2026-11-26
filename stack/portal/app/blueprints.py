@@ -44,9 +44,11 @@ def get(blueprint_id):
 
 
 def records(blueprint_id):
-    return db.q(
-        """SELECT e.workspace_id, w.name, w.owner, w.created_at
+    rows = db.q(
+        """SELECT e.workspace_id, w.name, w.owner, w.created_at, x.record AS execution, x.submitted_at
            FROM provisioning_evidence e JOIN workspaces w ON w.id=e.workspace_id
+           LEFT JOIN workspace_execution_records x ON x.workspace_id=e.workspace_id
            WHERE e.blueprint_id=? ORDER BY w.created_at DESC""",
         (blueprint_id,),
     )
+    return [{**row, "execution": json.loads(row["execution"]) if row["execution"] else None} for row in rows]

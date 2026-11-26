@@ -34,12 +34,19 @@ commit available to both maintainers through their own repository accounts.
    its terminal. Use a unique name such as `maintainer-a-usage` or `maintainer-b-usage`.
 2. In the workspace, clone the repository using your own access, check out the exact commit shown on the blueprint,
    and confirm it with `git rev-parse HEAD`.
-3. Run `python3 pilots/research-usage/summarize_usage.py --verify` from the checkout. It needs only Python 3.
+3. Run `python3 pilots/research-usage/summarize_usage.py --expected-commit FULL_BLUEPRINT_COMMIT > execution-record.json`
+   from the checkout. Replace `FULL_BLUEPRINT_COMMIT` with the commit copied from the blueprint. The command uses
+   Python 3 and Git. It compares the CSV, baseline, and summarizer against the commit and exits nonzero if they differ.
    A passing run reports **12.00 vCPU-hours** and **25.00 memory GiB-hours** across three fictional projects.
    Compare the per-project values with the [expected summary](../pilots/research-usage/expected-summary.json).
 4. Record time to terminal, time to verified report, manual handoffs, and whether another participant had to help.
-   Save the commit ID, report, and provisioning record with the pilot evidence. Keep the workspace setup and
-   analysis steps independent between participants.
+   Open **Provisioning and execution records** on the shared blueprint and attach your JSON to your own workspace.
+   The portal checks the commit against the provisioning record and recalculates the summary hash. The comparison
+   shows a match when records from at least two workspace owners agree on the commit, input hashes, and result.
+   Each workspace accepts one record of up to 32 KiB. Uploading the same record again is safe.
+   Input hashes normalize line endings so Windows and Linux checkouts can be compared.
+   The execution record is locally generated and unsigned. It does not attest to the runtime image or mount access.
+   Keep the workspace setup and analysis steps independent between participants.
 
 ### Pilot acceptance
 
