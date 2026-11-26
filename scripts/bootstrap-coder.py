@@ -68,10 +68,24 @@ def push(tok, names):
         img = IMAGES.get(n)
         if img and subprocess.run(["docker", "image", "inspect", img], capture_output=True).returncode != 0:
             print(f"   {n}: image {img} not built - skipped"); continue
-        subprocess.run(["docker", "exec", CONTAINER, "rm", "-rf", f"/tmp/tpl-{n}"], capture_output=True)
-        subprocess.run(["docker", "cp", os.path.join(ROOT, "templates", n), f"{CONTAINER}:/tmp/tpl-{n}"], check=True, capture_output=True)
-        r = cli(tok, "templates", "push", n, "-d", f"/tmp/tpl-{n}", "--yes")
+        staging = subprocess.run(
+            ["docker", "exec", CONTAINER, "mktemp", "-d", "/tmp/devhub-template.XXXXXXXX"],
+            check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        if not staging.startswith("/tmp/devhub-template.") or not staging.removeprefix("/tmp/devhub-template.").isalnum():
+            raise RuntimeError("Unexpected Coder template staging path")
+        source = f"{staging}/source"
+        try:
+            subprocess.run(
+                ["docker", "cp", os.path.join(ROOT, "templates", n), f"{CONTAINER}:{source}"],
+                check=True, capture_output=True,
+            )
+            r = cli(tok, "templates", "push", n, "-d", source, "--yes")
+        finally:
+            subprocess.run(["docker", "exec", "--user", "0", CONTAINER, "rm", "-rf", staging], capture_output=True)
         print(f"   {n}: pushed" if r.returncode == 0 else f"   {n}: push FAILED: {(r.stderr or r.stdout).strip()[-400:]}")
+        if r.returncode != 0:
+            raise SystemExit(r.returncode)
 
 def create(tok, spec):
     who, tpl = spec.split(":"); r = cli(tok, "list", "--all", "-o", "json")
